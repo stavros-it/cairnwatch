@@ -27,7 +27,7 @@ Status: planned → in progress → done. Update after every task.
 
 ## M5 — Diagnostics & portability
 - [x] Task 9: Diagnostics — logs, rate panel, statistics
-- [ ] Task 10: Import/export + settings view
+- [x] Task 10: Import/export + settings view
 
 ## M6 — Ship
 - [ ] Task 11: Icon + packaging
