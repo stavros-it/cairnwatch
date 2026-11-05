@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+//! App root for the binary target. Module tree mirrors the lib.
+
 mod core;
 mod net;
 mod ui;
@@ -22,6 +24,18 @@ enum View {
     Rates,
     Stats,
     Settings,
+}
+
+/// Import flow stages (Task 10).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum ImportStage {
+    #[default]
+    None,
+    ConfirmReplace {
+        path: std::path::PathBuf,
+        encrypted: bool,
+    },
+    Failed(String),
 }
 
 fn main() -> eframe::Result {
@@ -64,6 +78,11 @@ struct App {
     // Task 9: nav + diagnostics state.
     view: View,
     live_rate_limits: crate::net::ratelimits::RateLimits,
+    // Task 10: import/export dialogs.
+    export_password_dialog: bool,
+    export_password: String,
+    import_stage: ImportStage,
+    import_password: String,
     // VT gate (Task 7): exactly one download at a time.
     gate: GatePhase,
     gate_asset_name: String,
@@ -106,6 +125,10 @@ impl App {
             category_draft: String::new(),
             view: View::Repos,
             live_rate_limits: Default::default(),
+            export_password_dialog: false,
+            export_password: String::new(),
+            import_stage: ImportStage::None,
+            import_password: String::new(),
             gate: GatePhase::Idle,
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
@@ -206,18 +229,45 @@ impl eframe::App for App {
                         ui::rates::show_stats(ui, &self.state.stats, self.state.repos.len(), new_count);
                     }
                     View::Settings => {
-                        // Task 10 fills the settings view.
-                        ui.heading("Settings");
-                        ui.label(
-                            egui::RichText::new("Settings view arrives in the next milestone.")
-                                .color(ui::theme::Tokens::MUTED),
-                        );
+                        let action = ui::settings::show(ui, &mut self.config);
+                        // Persist config on any edit.
+                        if let Err(e) =
+                            self.config.save(&crate::core::paths::config_file())
+                        {
+                            self.log(format!("config save failed: {e}"));
+                        }
+                        if action.export_plain {
+                            let path = crate::core::paths::app_dir()
+                                .join("girust-export.json");
+                            let bytes = crate::core::io::export(
+                                &self.state,
+                                &self.config,
+                                None,
+                            );
+                            match std::fs::write(&path, bytes) {
+                                Ok(_) => self.log(format!("exported: {}", path.display())),
+                                Err(e) => self.log(format!("export failed: {e}")),
+                            }
+                        }
+                        if action.export_encrypted {
+                            self.export_password_dialog = true;
+                        }
+                        if action.import_file {
+                            self.import_stage = ImportStage::ConfirmReplace {
+                                path: crate::core::paths::app_dir().join("girust-export.json"),
+                                encrypted: false,
+                            };
+                            // Re-detect encryption when file is read below.
+                        }
                     }
                 }
             });
 
         // VT gate dialog (Task 7).
         self.show_gate(ctx);
+
+        // Task 10 dialogs: export password, import confirm.
+        self.show_io_dialogs(ctx);
 
         // Keep repainting while a refresh/download is in flight.
         if self.refresh_in_flight.load(Ordering::Relaxed) {
@@ -719,6 +769,143 @@ impl App {
                 config: self.config.clone(),
             });
             self.log(format!("download requested: {}", self.gate_asset_name));
+        }
+    }
+
+    /// Import/export dialogs (Task 10).
+    fn show_io_dialogs(&mut self, ctx: &egui::Context) {
+        if self.export_password_dialog {
+            let mut open = true;
+            egui::Window::new("Encrypted export")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label("Set a password for the export file:");
+                    ui.add_sized(
+                        [320.0, 32.0],
+                        egui::TextEdit::singleline(&mut self.export_password),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Export").clicked() && !self.export_password.is_empty() {
+                            let path = crate::core::paths::app_dir().join("girust-export.enc");
+                            let bytes = crate::core::io::export(
+                                &self.state,
+                                &self.config,
+                                Some(&self.export_password),
+                            );
+                            match std::fs::write(&path, bytes) {
+                                Ok(_) => self.log(format!("exported: {}", path.display())),
+                                Err(e) => self.log(format!("export failed: {e}")),
+                            }
+                            self.export_password_dialog = false;
+                            self.export_password.clear();
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.export_password_dialog = false;
+                            self.export_password.clear();
+                        }
+                    });
+                });
+            if !open {
+                self.export_password_dialog = false;
+                self.export_password.clear();
+            }
+        }
+
+        match self.import_stage.clone() {
+            ImportStage::None => {}
+            ImportStage::ConfirmReplace { path, encrypted } => {
+                let mut open = true;
+                let detected = std::fs::read(&path)
+                    .map(|b| b.starts_with(crate::core::io::MAGIC.as_bytes()))
+                    .unwrap_or(encrypted);
+                egui::Window::new("Import state")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("Import from: {}", path.display()));
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "This REPLACES your current repos, seen state, VT cache, stats and settings.",
+                            )
+                            .color(ui::theme::Tokens::AMBER),
+                        );
+                        ui.add_space(8.0);
+                        if detected {
+                            ui.label("The file is password-encrypted:");
+                            ui.add_sized(
+                                [320.0, 32.0],
+                                egui::TextEdit::singleline(&mut self.import_password),
+                            );
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Import and replace").clicked() {
+                                let bytes = match std::fs::read(&path) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        self.import_stage =
+                                            ImportStage::Failed(format!("read: {e}"));
+                                        return;
+                                    }
+                                };
+                                let pw = if detected && !self.import_password.is_empty() {
+                                    Some(self.import_password.as_str())
+                                } else {
+                                    None
+                                };
+                                match crate::core::io::import(&bytes, pw) {
+                                    Ok((state, config)) => {
+                                        self.state = state;
+                                        self.config = config;
+                                        self.save_state();
+                                        let _ =
+                                            self.config.save(&crate::core::paths::config_file());
+                                        self.log("import complete — state replaced");
+                                        self.import_stage = ImportStage::None;
+                                        self.import_password.clear();
+                                    }
+                                    Err(e) => {
+                                        self.import_stage = ImportStage::Failed(e.to_string());
+                                        self.import_password.clear();
+                                    }
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.import_stage = ImportStage::None;
+                                self.import_password.clear();
+                            }
+                        });
+                    });
+                if !open {
+                    self.import_stage = ImportStage::None;
+                    self.import_password.clear();
+                }
+            }
+            ImportStage::Failed(msg) => {
+                let mut open = true;
+                egui::Window::new("Import failed")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(&msg)
+                                .color(ui::theme::Tokens::DESTRUCTIVE),
+                        );
+                        if ui.button("Close").clicked() {
+                            self.import_stage = ImportStage::None;
+                        }
+                    });
+                if !open {
+                    self.import_stage = ImportStage::None;
+                }
+            }
         }
     }
 
