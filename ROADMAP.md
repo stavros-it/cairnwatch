@@ -30,5 +30,5 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 10: Import/export + settings view
 
 ## M6 — Ship
-- [ ] Task 11: Icon + packaging
+- [x] Task 11: Icon + packaging
 - [ ] Task 12: Final review + verification pass
