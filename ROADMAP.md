@@ -18,7 +18,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 4: GitHub + GitLab release clients
 
 ## M3 — Core feature
-- [ ] Task 5: VirusTotal client + download engine + command bus
+- [x] Task 5: VirusTotal client + download engine + command bus
 - [ ] Task 6: egui shell — theme, main list, repo detail
 - [ ] Task 7: Download + VT gate UX
 
