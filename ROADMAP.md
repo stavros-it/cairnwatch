@@ -11,7 +11,7 @@ Status: planned → in progress → done. Update after every task.
 
 ## M1 — Skeleton
 - [x] Task 1: Cargo scaffold + design system generation
-- [ ] Task 2: Core state — models, config, persistence
+- [x] Task 2: Core state — models, config, persistence
 
 ## M2 — Sources
 - [ ] Task 3: Repo URL parsing
