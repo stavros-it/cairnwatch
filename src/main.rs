@@ -48,6 +48,9 @@ struct App {
     add_error: Option<String>,
     filter_new_only: bool,
     log_ring: VecDeque<String>,
+    // Task 8: context-menu driven state.
+    category_dialog_for: Option<String>,
+    category_draft: String,
     // VT gate (Task 7): exactly one download at a time.
     gate: GatePhase,
     gate_asset_name: String,
@@ -86,6 +89,8 @@ impl App {
             add_error: None,
             filter_new_only: false,
             log_ring: VecDeque::with_capacity(500),
+            category_dialog_for: None,
+            category_draft: String::new(),
             gate: GatePhase::Idle,
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
@@ -348,6 +353,10 @@ impl App {
 
         // Rows.
         let mut clicked_repo: Option<String> = None;
+        let mut clicked_pin: Option<String> = None;
+        let mut clicked_remove: Option<String> = None;
+        let mut cat_dialog_open: Option<String> = None;
+        let mut cat_draft = String::new();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -475,7 +484,24 @@ impl App {
                             if row_response.clicked() {
                                 clicked_repo = Some(repo.id.clone());
                             }
-                            row_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let row_hover = row_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            // Context menu: pin, category, remove.
+                            row_hover.context_menu(|ui| {
+                                let pin_label = if repo.pinned { "Unpin" } else { "Pin to top" };
+                                if ui.button(pin_label).clicked() {
+                                    clicked_pin = Some(repo.id.clone());
+                                    ui.close_menu();
+                                }
+                                if ui.button("Set category…").clicked() {
+                                    cat_dialog_open = Some(repo.id.clone());
+                                    cat_draft = repo.category.clone().unwrap_or_default();
+                                    ui.close_menu();
+                                }
+                                if !repo.pinned && ui.button("Remove repo").clicked() {
+                                    clicked_remove = Some(repo.id.clone());
+                                    ui.close_menu();
+                                }
+                            });
                         });
                     ui.add_space(2.0);
                     let _ = id;
@@ -493,6 +519,81 @@ impl App {
                 }
             }
             self.save_state();
+        }
+        if let Some(repo_id) = clicked_pin {
+            let log_line = if let Some(r) = self.state.repos.iter_mut().find(|r| r.id == repo_id) {
+                r.pinned = !r.pinned;
+                Some(format!("{} {}", if r.pinned { "pinned" } else { "unpinned" }, r.display_name()))
+            } else {
+                None
+            };
+            if let Some(l) = log_line {
+                self.log(l);
+            }
+            self.save_state();
+        }
+        if let Some(repo_id) = clicked_remove {
+            self.state.repos.retain(|r| r.id != repo_id);
+            self.log("repo removed");
+            self.save_state();
+        }
+
+        // Category assignment dialog (8-slot palette preview).
+        if cat_dialog_open.is_some() {
+            self.category_dialog_for = cat_dialog_open;
+            self.category_draft = cat_draft;
+        }
+        if let Some(repo_id) = self.category_dialog_for.clone() {
+            let mut open = true;
+            egui::Window::new("Set category")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(&ctx, |ui| {
+                    ui.label("Category name (color is derived):");
+                    ui.add_sized(
+                        [320.0, 32.0],
+                        egui::TextEdit::singleline(&mut self.category_draft)
+                            .hint_text("e.g. tools, media, dev"),
+                    );
+                    ui.add_space(8.0);
+                    // Palette preview: 8 swatches.
+                    ui.horizontal(|ui| {
+                        for color in ui::theme::Tokens::RIBBONS {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(24.0, 24.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().rect_filled(rect, 4.0, color);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            let cat = self.category_draft.trim().to_string();
+                            let log_line = if let Some(r) =
+                                self.state.repos.iter_mut().find(|r| r.id == repo_id)
+                            {
+                                r.category = if cat.is_empty() { None } else { Some(cat.clone()) };
+                                Some(format!("category set: {}", r.display_name()))
+                            } else {
+                                None
+                            };
+                            if let Some(l) = log_line {
+                                self.log(l);
+                            }
+                            self.category_dialog_for = None;
+                            self.save_state();
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.category_dialog_for = None;
+                        }
+                    });
+                });
+            if !open {
+                self.category_dialog_for = None;
+            }
         }
 
         // Add-repo modal.
@@ -543,19 +644,19 @@ impl App {
             self.selected_repo = None;
             return;
         };
-        if let Some(asset) = ui::detail::show(ui, &repo) {
+        let (asset_clicked, filters_changed) = ui::detail::show(ui, &repo);
+        if let Some(f) = filters_changed {
+            if let Some(r) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
+                r.filters = f;
+            }
+            self.save_state();
+            self.log("filters updated");
+        }
+        if let Some(asset) = asset_clicked {
             if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
                 self.log("download blocked: another download is in the gate");
                 return;
             }
-            // Cache short-circuit (spec): if we already have a verdict for
-            // this exact asset name in this repo's latest release and it is
-            // clean, we still must download (the file may be gone) — but the
-            // scan step will be skipped by matching sha256 after download.
-            // True short-circuit happens post-download in the bus via the
-            // cached sha256 the UI attaches. Simplest correct path: proceed;
-            // the bus lookup for a cached sha is one cheap GET that returns
-            // the same report.
             self.gate = GatePhase::Downloading { downloaded: 0, total: asset.size };
             self.gate_asset_name = asset.name.clone();
             self.gate_repo_id = repo.id.clone();

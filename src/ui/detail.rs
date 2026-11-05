@@ -6,9 +6,10 @@ use crate::ui::widgets;
 use egui::{RichText, ScrollArea, Ui};
 
 /// Render the detail panel for `repo`. Returns the asset the user clicked
-/// Download on, if any this frame.
-pub fn show(ui: &mut Ui, repo: &Repo) -> Option<Asset> {
+/// Download on, if any this frame, plus filter edits.
+pub fn show(ui: &mut Ui, repo: &Repo) -> (Option<Asset>, Option<crate::core::models::ReleaseFilters>) {
     let mut clicked: Option<Asset> = None;
+    let mut filters_changed: Option<crate::core::models::ReleaseFilters> = None;
     ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(8.0);
         // Header: name, host, pin.
@@ -23,6 +24,55 @@ pub fn show(ui: &mut Ui, repo: &Repo) -> Option<Asset> {
                 ui.label(RichText::new("📌 pinned").size(Tokens::SMALL + 2.0).color(Tokens::MUTED));
             }
         });
+        ui.add_space(8.0);
+
+        // Per-repo filters (Task 8): prerelease toggle, tag regex, asset glob.
+        egui::Frame::none()
+            .fill(Tokens::MUTED_BG.gamma_multiply(0.4))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::same(12.0))
+            .show(ui, |ui| {
+                ui.label(RichText::new("FILTERS").size(Tokens::SMALL).color(Tokens::MUTED));
+                ui.horizontal(|ui| {
+                    let mut filters = repo.filters.clone();
+                    if ui
+                        .checkbox(&mut filters.include_prereleases, "Include prereleases")
+                        .changed()
+                    {
+                        filters_changed = Some(filters);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut tag_re = repo.filters.tag_regex.clone().unwrap_or_default();
+                    let re_field = ui.add_sized(
+                        [240.0, 28.0],
+                        egui::TextEdit::singleline(&mut tag_re).hint_text("tag regex, e.g. ^v\\d+\\.\\d+"),
+                    );
+                    let valid = tag_re.is_empty() || regex::Regex::new(&tag_re).is_ok();
+                    let _ = re_field;
+                    if re_field.changed() {
+                        let mut f = repo.filters.clone();
+                        f.tag_regex = if tag_re.is_empty() { None } else { Some(tag_re) };
+                        filters_changed = Some(f);
+                    }
+                    if !valid {
+                        ui.label(RichText::new("invalid").size(Tokens::SMALL).color(Tokens::DESTRUCTIVE));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut pat = repo.filters.asset_pattern.clone().unwrap_or_default();
+                    let pat_field = ui.add_sized(
+                        [240.0, 28.0],
+                        egui::TextEdit::singleline(&mut pat).hint_text("asset glob, e.g. *-x86_64.zip"),
+                    );
+                    if pat_field.changed() {
+                        let mut f = repo.filters.clone();
+                        f.asset_pattern = if pat.trim().is_empty() { None } else { Some(pat) };
+                        filters_changed = Some(f);
+                    }
+                    ui.label(RichText::new("matching assets sort first").size(Tokens::SMALL).color(Tokens::MUTED));
+                });
+            });
         ui.add_space(8.0);
 
         match &repo.latest {
@@ -60,18 +110,27 @@ pub fn show(ui: &mut Ui, repo: &Repo) -> Option<Asset> {
                         .color(Tokens::MUTED),
                 );
                 ui.add_space(4.0);
+                // Asset table: pattern-matching assets sort first + get a
+                // "match" mark (Task 8).
+                let pattern = repo.filters.asset_pattern.as_deref();
+                let mut sorted: Vec<&Asset> = rel.assets.iter().collect();
+                sorted.sort_by_key(|a| !crate::ui::list::asset_matches(pattern, &a.name));
                 egui::Frame::none()
                     .fill(Tokens::CARD)
                     .rounding(8.0)
                     .inner_margin(egui::Margin::same(12.0))
                     .show(ui, |ui| {
-                        for asset in &rel.assets {
+                        for asset in sorted {
+                            let matched = crate::ui::list::asset_matches(pattern, &asset.name);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(&asset.name)
                                         .size(Tokens::DATA)
-                                        .color(Tokens::TEXT),
+                                        .color(if matched { Tokens::TEXT } else { Tokens::MUTED }),
                                 );
+                                if matched {
+                                    widgets::pill(ui, "match", Tokens::ACCENT, false);
+                                }
                                 ui.label(
                                     RichText::new(format_bytes(asset.size))
                                         .size(Tokens::DATA)
@@ -138,7 +197,7 @@ pub fn show(ui: &mut Ui, repo: &Repo) -> Option<Asset> {
             }
         }
     });
-    clicked
+    (clicked, filters_changed)
 }
 
 fn release_page_url(repo: &Repo, tag: &str) -> String {
