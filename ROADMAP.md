@@ -10,7 +10,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] PROJECT.md written
 
 ## M1 — Skeleton
-- [ ] Task 1: Cargo scaffold + design system generation
+- [x] Task 1: Cargo scaffold + design system generation
 - [ ] Task 2: Core state — models, config, persistence
 
 ## M2 — Sources
