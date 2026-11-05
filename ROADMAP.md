@@ -19,7 +19,7 @@ Status: planned → in progress → done. Update after every task.
 
 ## M3 — Core feature
 - [x] Task 5: VirusTotal client + download engine + command bus
-- [ ] Task 6: egui shell — theme, main list, repo detail
+- [x] Task 6: egui shell — theme, main list, repo detail
 - [ ] Task 7: Download + VT gate UX
 
 ## M4 — Organization
