@@ -26,7 +26,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 8: Search, sort, pins, filters polish
 
 ## M5 — Diagnostics & portability
-- [ ] Task 9: Diagnostics — logs, rate panel, statistics
+- [x] Task 9: Diagnostics — logs, rate panel, statistics
 - [ ] Task 10: Import/export + settings view
 
 ## M6 — Ship
