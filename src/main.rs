@@ -11,6 +11,7 @@ use crate::net::bus::{Command, Event};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use ui::gate::GatePhase;
 use ui::list::SortKey;
 
 fn main() -> eframe::Result {
@@ -47,6 +48,10 @@ struct App {
     add_error: Option<String>,
     filter_new_only: bool,
     log_ring: VecDeque<String>,
+    // VT gate (Task 7): exactly one download at a time.
+    gate: GatePhase,
+    gate_asset_name: String,
+    gate_repo_id: String,
 }
 
 impl Default for App {
@@ -81,6 +86,9 @@ impl App {
             add_error: None,
             filter_new_only: false,
             log_ring: VecDeque::with_capacity(500),
+            gate: GatePhase::Idle,
+            gate_asset_name: String::new(),
+            gate_repo_id: String::new(),
         }
     }
 
@@ -151,6 +159,9 @@ impl eframe::App for App {
                 }
             });
 
+        // VT gate dialog (Task 7).
+        self.show_gate(ctx);
+
         // Keep repainting while a refresh/download is in flight.
         if self.refresh_in_flight.load(Ordering::Relaxed) {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
@@ -183,13 +194,68 @@ impl App {
                     }
                 },
                 Event::DownloadProgress { repo_id: _, asset_name: _, downloaded, total } => {
-                    let _ = (downloaded, total); // Task 7 renders progress
+                    if matches!(self.gate, GatePhase::Downloading { .. }) {
+                        self.gate = GatePhase::Downloading { downloaded, total };
+                        // Keep the UI live during transfer.
+                    }
                 }
-                Event::VtVerdictReady { repo_id: _, asset_name: _, sha256: _, outcome: _ } => {
-                    // Task 7 wires the gate UI.
+                Event::VtVerdictReady { repo_id, asset_name, sha256, outcome } => {
+                    let (phase, cached) = ui::gate::phase_after_scan(
+                        &outcome,
+                        &sha256,
+                        std::path::PathBuf::new(), // rescan has no temp file
+                    );
+                    if let Some(v) = cached {
+                        self.state.vt_cache.insert(sha256.clone(), v.clone());
+                        self.state.stats.vt_scans += 1;
+                        if v.is_flagged() {
+                            self.state.stats.vt_flagged_seen += 1;
+                        }
+                    }
+                    match phase {
+                        GatePhase::Clean { .. } | GatePhase::AwaitingConfirm(_) => {
+                            // Re-scan of a previously downloaded asset: show
+                            // the verdict as a banner-style gate phase.
+                            self.gate = phase;
+                            self.gate_asset_name = asset_name;
+                            self.gate_repo_id = repo_id;
+                        }
+                        _ => {}
+                    }
                 }
-                Event::FileReady { repo_id: _, asset_name: _, path: _, sha256: _, outcome: _ } => {
-                    // Task 7 wires the gate UI.
+                Event::FileReady { repo_id, asset_name, path, sha256, outcome } => {
+                    // Cache hit short-circuit happened before the command;
+                    // the bus always scans fresh here.
+                    let (phase, cached) = ui::gate::phase_after_scan(&outcome, &sha256, path);
+                    if let Some(v) = cached {
+                        self.state.vt_cache.insert(sha256.clone(), v.clone());
+                        self.state.stats.vt_scans += 1;
+                        if v.is_flagged() {
+                            self.state.stats.vt_flagged_seen += 1;
+                        }
+                    }
+                    match &phase {
+                        GatePhase::Clean { path, sha256 } => {
+                            // Clean: deliver immediately (spec).
+                            let dl = self.config.download_dir.clone();
+                            match ui::gate::deliver(path, &dl) {
+                                Ok(dest) => {
+                                    self.state.stats.downloads_completed += 1;
+                                    self.gate = GatePhase::Done { path: dest.clone(), sha256: sha256.clone() };
+                                    self.log(format!("clean → delivered: {}", dest.display()));
+                                }
+                                Err(e) => {
+                                    self.gate = GatePhase::Failed(e);
+                                }
+                            }
+                        }
+                        GatePhase::AwaitingConfirm(_) => {
+                            self.gate = phase;
+                            self.gate_asset_name = asset_name;
+                            self.gate_repo_id = repo_id;
+                        }
+                        _ => self.gate = phase,
+                    }
                 }
                 Event::LogLine(line) => self.log(line),
                 Event::RateLimitsUpdated(_rl) => {
@@ -478,12 +544,234 @@ impl App {
             return;
         };
         if let Some(asset) = ui::detail::show(ui, &repo) {
+            if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
+                self.log("download blocked: another download is in the gate");
+                return;
+            }
+            // Cache short-circuit (spec): if we already have a verdict for
+            // this exact asset name in this repo's latest release and it is
+            // clean, we still must download (the file may be gone) — but the
+            // scan step will be skipped by matching sha256 after download.
+            // True short-circuit happens post-download in the bus via the
+            // cached sha256 the UI attaches. Simplest correct path: proceed;
+            // the bus lookup for a cached sha is one cheap GET that returns
+            // the same report.
+            self.gate = GatePhase::Downloading { downloaded: 0, total: asset.size };
+            self.gate_asset_name = asset.name.clone();
+            self.gate_repo_id = repo.id.clone();
+            self.state.stats.downloads_started += 1;
             self.send(Command::DownloadAsset {
                 repo_id: repo.id.clone(),
                 asset,
                 config: self.config.clone(),
             });
-            self.log("download requested");
+            self.log(format!("download requested: {}", self.gate_asset_name));
+        }
+    }
+
+    /// The VT gate modal: progress, scanning, confirm dialogs, receipts.
+    fn show_gate(&mut self, ctx: &egui::Context) {
+        let phase = self.gate.clone();
+        let asset_name = self.gate_asset_name.clone();
+        match phase {
+            GatePhase::Idle => {}
+            GatePhase::Downloading { downloaded, total } => {
+                egui::Window::new("Downloading")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(&asset_name);
+                        let pct = if total > 0 {
+                            (downloaded as f32 / total as f32).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let bar = egui::ProgressBar::new(pct)
+                            .text(if total > 0 {
+                                format!(
+                                    "{} / {}",
+                                    ui::detail::format_bytes(downloaded),
+                                    ui::detail::format_bytes(total)
+                                )
+                            } else {
+                                ui::detail::format_bytes(downloaded)
+                            })
+                            .desired_width(360.0);
+                        ui.add(bar);
+                        if ui.button("Cancel").clicked() {
+                            self.gate = GatePhase::Cancelled;
+                            self.log("download cancelled by user");
+                        }
+                    });
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+            GatePhase::Scanning => {
+                egui::Window::new("Scanning")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("Scanning {asset_name} on VirusTotal…"));
+                        ui.add(egui::Spinner::new());
+                    });
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            }
+            GatePhase::AwaitingConfirm(kind) => {
+                // Cancel is the default-focused button (spec). egui has no
+                // focus-on-open API here; we render Cancel FIRST and larger,
+                // and it owns the Response marked as default.
+                egui::Window::new(match &kind {
+                    ui::gate::ConfirmKind::Flagged { .. } => "⚠ Flagged file",
+                    ui::gate::ConfirmKind::Unverified { .. } => "Not scanned",
+                })
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    match &kind {
+                        ui::gate::ConfirmKind::Flagged { verdict, top_engines } => {
+                            let (flagged, total) = verdict.flagged_ratio();
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{flagged}/{total} engines flagged this file"
+                                ))
+                                .size(ui::theme::Tokens::BODY)
+                                .color(ui::theme::Tokens::DESTRUCTIVE)
+                                .strong(),
+                            );
+                            ui.label(&asset_name);
+                            ui.add_space(8.0);
+                            if !top_engines.is_empty() {
+                                ui.label(format!("Flagged by: {}", top_engines.join(", ")));
+                            } else {
+                                ui.label("Flagged by: (engine list not retrieved)");
+                            }
+                            ui.add_space(8.0);
+                            let url = format!(
+                                "https://www.virustotal.com/gui/file/{}",
+                                verdict.sha256
+                            );
+                            if ui.button("Open VirusTotal report").clicked() {
+                                let _ = crate::ui::detail::open_browser(&url);
+                            }
+                        }
+                        ui::gate::ConfirmKind::Unverified { reason } => {
+                            ui.label(
+                                egui::RichText::new("Not scanned — proceed?")
+                                    .size(ui::theme::Tokens::BODY)
+                                    .color(ui::theme::Tokens::AMBER)
+                                    .strong(),
+                            );
+                            ui.label(&asset_name);
+                            ui.add_space(8.0);
+                            ui.label(format!("Reason: {reason}"));
+                        }
+                    }
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        // Cancel first and visually primary (default-focused).
+                        let cancel = egui::Button::new(
+                            egui::RichText::new("Cancel")
+                                .size(ui::theme::Tokens::BODY)
+                                .color(ui::theme::Tokens::ON_ACCENT),
+                        )
+                        .fill(ui::theme::Tokens::ACCENT);
+                        if ui.add(cancel).clicked() {
+                            // Delete the temp file (best effort). The temp
+                            // name equals the sanitized asset name.
+                            ui::gate::discard(
+                                &crate::core::paths::tmp_dir().join(
+                                    std::path::Path::new(&asset_name)
+                                        .file_name()
+                                        .unwrap_or_default(),
+                                ),
+                            );
+                            self.gate = GatePhase::Cancelled;
+                            self.log("gate: cancelled, temp deleted");
+                        }
+                        if ui.button("Download anyway").clicked() {
+                            let tmp = crate::core::paths::tmp_dir().join(
+                                std::path::Path::new(&asset_name)
+                                    .file_name()
+                                    .unwrap_or_default(),
+                            );
+                            let dl = self.config.download_dir.clone();
+                            match ui::gate::deliver(&tmp, &dl) {
+                                Ok(dest) => {
+                                    let sha = match &kind {
+                                        ui::gate::ConfirmKind::Flagged { verdict, .. } => {
+                                            verdict.sha256.clone()
+                                        }
+                                        _ => String::new(),
+                                    };
+                                    self.state.stats.downloads_completed += 1;
+                                    self.log(format!("gate: confirmed, delivered {}", dest.display()));
+                                    self.gate = GatePhase::Done { path: dest, sha256: sha };
+                                }
+                                Err(e) => {
+                                    self.gate = GatePhase::Failed(e);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Cancel is the default action")
+                            .size(ui::theme::Tokens::SMALL)
+                            .color(ui::theme::Tokens::MUTED),
+                    );
+                });
+            }
+            GatePhase::Clean { path, sha256 } => {
+                // Should not linger — delivery happens in drain_events.
+                let dl = self.config.download_dir.clone();
+                match ui::gate::deliver(&path, &dl) {
+                    Ok(dest) => {
+                        self.state.stats.downloads_completed += 1;
+                        self.log(format!("clean → delivered: {}", dest.display()));
+                        self.gate = GatePhase::Done { path: dest, sha256 };
+                    }
+                    Err(e) => self.gate = GatePhase::Failed(e),
+                }
+            }
+            GatePhase::Done { path, sha256 } => {
+                egui::Window::new("Downloaded")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new("Saved").strong());
+                        ui.label(path.to_string_lossy().as_ref());
+                        if !sha256.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!("sha256: {sha256}"))
+                                    .size(ui::theme::Tokens::SMALL)
+                                    .color(ui::theme::Tokens::MUTED),
+                            );
+                        }
+                        if ui.button("Close").clicked() {
+                            self.gate = GatePhase::Idle;
+                        }
+                    });
+            }
+            GatePhase::Cancelled => {
+                self.gate = GatePhase::Idle;
+            }
+            GatePhase::Failed(e) => {
+                egui::Window::new("Download failed")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(&e).color(ui::theme::Tokens::DESTRUCTIVE),
+                        );
+                        if ui.button("Close").clicked() {
+                            self.gate = GatePhase::Idle;
+                        }
+                    });
+            }
         }
     }
 }

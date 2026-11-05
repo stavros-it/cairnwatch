@@ -286,11 +286,34 @@ pub fn spawn(
                                 continue;
                             }
                         };
-                        // VT gate: throttle, then hash lookup.
-                        // (Upload fallback and confirm dialogs are Task 7's
-                        // flow; here we deliver lookup outcome for gating.)
+                        // VT gate: throttle, then hash lookup. On Unknown and
+                        // upload-fallback enabled, upload + poll (spec).
                         let _ = throttle.try_acquire(Instant::now());
-                        let outcome = vt::lookup_sha256(&client, &config.vt_api_key, &sha).await;
+                        let mut outcome = vt::lookup_sha256(&client, &config.vt_api_key, &sha).await;
+                        if matches!(outcome, vt::LookupOutcome::Unknown) && config.vt_upload_fallback {
+                            let _ = event_tx.send(Event::LogLine(
+                                "unknown to VT — upload fallback engaging".to_string(),
+                            ));
+                            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            match vt::upload_file(&client, &config.vt_api_key, &path, size).await {
+                                Ok(analysis_id) => {
+                                    let _ = event_tx.send(Event::LogLine(
+                                        format!("uploaded, analysis {analysis_id} — polling"),
+                                    ));
+                                    match vt::poll_analysis(&client, &config.vt_api_key, &analysis_id, &sha).await {
+                                        Ok(verdict) => {
+                                            outcome = vt::LookupOutcome::Report(verdict);
+                                        }
+                                        Err(e) => {
+                                            outcome = vt::LookupOutcome::NoVerdict(e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    outcome = vt::LookupOutcome::NoVerdict(e);
+                                }
+                            }
+                        }
                         let _ = event_tx.send(Event::FileReady {
                             repo_id,
                             asset_name: asset.name.clone(),

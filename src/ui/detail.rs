@@ -168,7 +168,7 @@ pub fn format_bytes(n: u64) -> String {
 }
 
 /// Browser-open shim (webbrowser crate not added; shell out).
-mod open {
+pub mod open {
     pub fn url(url: &str) -> std::io::Result<()> {
         #[cfg(target_os = "windows")]
         {
@@ -184,6 +184,10 @@ mod open {
         }
         Ok(())
     }
+}
+
+pub fn open_browser(url: &str) -> std::io::Result<()> {
+    open::url(url)
 }
 
 #[cfg(test)]
