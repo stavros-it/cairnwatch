@@ -17,6 +17,14 @@ repos.json
 # UI/UX Pro Max design system output (generated, machine-derived)
 design-system/
 
+# Impeccable runtime dirs (regenerated); committed: PRODUCT.md, briefs, config
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/build/
+.impeccable/questions/
+.impeccable/critique/
+.impeccable/config.local.json
+
 # OS cruft
 Thumbs.db
 Desktop.ini
