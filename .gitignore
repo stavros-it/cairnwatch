@@ -1,0 +1,23 @@
+# Root .gitignore for GiRustStatus repo
+
+# ObtainiumPlus-main is a read-only reference copy (upstream design
+# inspiration), not part of this repo's own source.
+ObtainiumPlus-main/
+
+# Rust
+target/
+**/*.rs.bk
+
+# App runtime data (portable folder contents, not source)
+tmp/
+downloads/
+config.toml
+repos.json
+
+# UI/UX Pro Max design system output (generated, machine-derived)
+design-system/
+
+# OS cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
