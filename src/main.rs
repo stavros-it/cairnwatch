@@ -73,6 +73,7 @@ struct App {
     state: AppState,
     config: Config,
     state_error: Option<String>,
+    config_error: Option<String>,
     // Bus
     cmd_tx: tokio::sync::mpsc::UnboundedSender<Command>,
     event_rx: tokio::sync::mpsc::UnboundedReceiver<Event>,
@@ -101,6 +102,9 @@ struct App {
     gate: GatePhase,
     gate_asset_name: String,
     gate_repo_id: String,
+    /// Real temp path of the gated file (FileReady carries it; dialogs use
+    /// it instead of reconstructing from the asset name — review fix).
+    gate_temp_path: Option<std::path::PathBuf>,
 }
 
 impl Default for App {
@@ -115,7 +119,14 @@ impl App {
             Ok(s) => (s, None),
             Err(e) => (AppState::default(), Some(e)),
         };
-        let config = Config::load(&crate::core::paths::config_file()).unwrap_or_default();
+        let (config, config_error) = match Config::load(&crate::core::paths::config_file()) {
+            Ok(c) => (c, None),
+            // Corrupt config: keep defaults in memory but DON'T write them
+            // over the file until the user changes something intentionally
+            // (review: silent reset loses VT key/PATs).
+            Err(e) if e.contains("No such file") || e.contains("not found") || e.contains("(os 2") => (Config::default(), None),
+            Err(e) => (Config::default(), Some(e)),
+        };
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let refresh_in_flight = Arc::new(AtomicBool::new(false));
@@ -124,6 +135,7 @@ impl App {
             state,
             config,
             state_error,
+            config_error,
             cmd_tx,
             event_rx,
             refresh_in_flight,
@@ -146,6 +158,7 @@ impl App {
             gate: GatePhase::Idle,
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
+            gate_temp_path: None,
         }
     }
 
@@ -215,6 +228,20 @@ impl eframe::App for App {
                             );
                         });
                 }
+                // Corrupt-config banner (never silently reset — review fix).
+                if let Some(err) = &self.config_error {
+                    egui::Frame::none()
+                        .fill(ui::theme::Tokens::AMBER.gamma_multiply(0.15))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "config.toml could not be read ({err}). Defaults shown; SAVING IN SETTINGS WILL OVERWRITE THE FILE — back it up first."
+                                ))
+                                .color(ui::theme::Tokens::TEXT),
+                            );
+                        });
+                }
 
                 match self.view {
                     View::Repos => {
@@ -243,12 +270,16 @@ impl eframe::App for App {
                         ui::rates::show_stats(ui, &self.state.stats, self.state.repos.len(), new_count);
                     }
                     View::Settings => {
+                        let before = self.config.clone();
                         let action = ui::settings::show(ui, &mut self.config);
-                        // Persist config on any edit.
-                        if let Err(e) =
-                            self.config.save(&crate::core::paths::config_file())
-                        {
-                            self.log(format!("config save failed: {e}"));
+                        // Persist config ONLY when it actually changed (not
+                        // every frame — review fix).
+                        if self.config != before {
+                            if let Err(e) =
+                                self.config.save(&crate::core::paths::config_file())
+                            {
+                                self.log(format!("config save failed: {e}"));
+                            }
                         }
                         if action.export_plain {
                             let path = crate::core::paths::app_dir()
@@ -267,11 +298,16 @@ impl eframe::App for App {
                             self.export_password_dialog = true;
                         }
                         if action.import_file {
-                            self.import_stage = ImportStage::ConfirmReplace {
-                                path: crate::core::paths::app_dir().join("girust-export.json"),
-                                encrypted: false,
+                            // Accept both export filenames (review fix).
+                            let enc = crate::core::paths::app_dir().join("girust-export.enc");
+                            let plain =
+                                crate::core::paths::app_dir().join("girust-export.json");
+                            let path = if enc.exists() {
+                                enc
+                            } else {
+                                plain
                             };
-                            // Re-detect encryption when file is read below.
+                            self.import_stage = ImportStage::ConfirmReplace { path, encrypted: false };
                         }
                     }
                 }
@@ -298,9 +334,8 @@ impl App {
                     self.log(format!("repo updated: {}", repo.display_name()));
                     if let Some(existing) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
                         *existing = repo;
-                    } else {
-                        self.state.repos.push(repo);
                     }
+                    // Repos removed mid-refresh are NOT re-added (review).
                 }
                 Event::AddResult(res) => match res {
                     Ok(repo) => {
@@ -309,6 +344,7 @@ impl App {
                         self.show_add_dialog = false;
                         self.add_url.clear();
                         self.add_error = None;
+                        self.save_state();
                     }
                     Err(e) => {
                         self.add_error = Some(e);
@@ -345,9 +381,19 @@ impl App {
                     }
                 }
                 Event::FileReady { repo_id, asset_name, path, sha256, outcome } => {
-                    // Cache hit short-circuit happened before the command;
-                    // the bus always scans fresh here.
-                    let (phase, cached) = ui::gate::phase_after_scan(&outcome, &sha256, path);
+                    // Record asset → sha for the detail-view VT badge.
+                    self.state
+                        .asset_shas
+                        .insert(format!("{repo_id}/{asset_name}"), sha256.clone());
+                    // If the user cancelled or another flow took the gate,
+                    // discard this file — no delivery after cancel (review
+                    // CRITICAL #2).
+                    if !matches!(self.gate, GatePhase::Downloading { .. } | GatePhase::Scanning) {
+                        ui::gate::discard(&path);
+                        self.log("discarded stale download (gate moved on)");
+                        continue;
+                    }
+                    let (phase, cached) = ui::gate::phase_after_scan(&outcome, &sha256, path.clone());
                     if let Some(v) = cached {
                         self.state.vt_cache.insert(sha256.clone(), v.clone());
                         self.state.stats.vt_scans += 1;
@@ -371,14 +417,26 @@ impl App {
                             }
                         }
                         GatePhase::AwaitingConfirm(_) => {
+                            // Carry the REAL temp path so Cancel/Confirm
+                            // operate on the file the engine wrote.
+                            self.gate_temp_path = Some(path);
                             self.gate = phase;
                             self.gate_asset_name = asset_name;
                             self.gate_repo_id = repo_id;
                         }
                         _ => self.gate = phase,
                     }
+                    self.save_state();
                 }
                 Event::LogLine(line) => self.log(line),
+                Event::ScanStarted { repo_id: _, asset_name: _ } => {
+                    if matches!(self.gate, GatePhase::Downloading { .. }) {
+                        self.gate = GatePhase::Scanning;
+                    }
+                }
+                Event::DownloadFailed { repo_id: _, reason } => {
+                    self.gate = GatePhase::Failed(reason);
+                }
                 Event::RateLimitsUpdated(rl) => {
                     self.live_rate_limits = rl;
                 }
@@ -760,7 +818,28 @@ impl App {
             self.selected_repo = None;
             return;
         };
-        let (asset_clicked, filters_changed) = ui::detail::show(ui, &repo);
+        // VT badge lookup closure: asset name → cached verdict info.
+        let vt_info = |asset_name: &str| -> Option<ui::detail::AssetVtInfo> {
+            let key = format!("{}/{}", repo_id, asset_name);
+            let sha = self.state.asset_shas.get(&key)?;
+            let v = self.state.vt_cache.get(sha)?;
+            let (flagged, total) = v.flagged_ratio();
+            Some(ui::detail::AssetVtInfo {
+                label: format!("{flagged}/{total}"),
+                flagged: flagged > 0,
+                sha256: sha.clone(),
+            })
+        };
+        let (asset_clicked, filters_changed, rescan) = ui::detail::show(ui, &repo, &vt_info);
+        if let Some((asset_name, sha256)) = rescan {
+            self.send(Command::RescanAsset {
+                repo_id: repo.id.clone(),
+                asset_name,
+                sha256,
+                config: self.config.clone(),
+            });
+            self.log("re-scan requested");
+        }
         if let Some(f) = filters_changed {
             if let Some(r) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
                 r.filters = f;
@@ -954,6 +1033,7 @@ impl App {
                             .desired_width(360.0);
                         ui.add(bar);
                         if ui.button("Cancel").clicked() {
+                            self.send(Command::CancelDownload);
                             self.gate = GatePhase::Cancelled;
                             self.log("download cancelled by user");
                         }
@@ -996,11 +1076,7 @@ impl App {
                             );
                             ui.label(&asset_name);
                             ui.add_space(8.0);
-                            if !top_engines.is_empty() {
-                                ui.label(format!("Flagged by: {}", top_engines.join(", ")));
-                            } else {
-                                ui.label("Flagged by: (engine list not retrieved)");
-                            }
+                            ui.label(format!("Flagged by: {}", top_engines.join(", ")));
                             ui.add_space(8.0);
                             let url = format!(
                                 "https://www.virustotal.com/gui/file/{}",
@@ -1032,24 +1108,19 @@ impl App {
                         )
                         .fill(ui::theme::Tokens::ACCENT);
                         if ui.add(cancel).clicked() {
-                            // Delete the temp file (best effort). The temp
-                            // name equals the sanitized asset name.
-                            ui::gate::discard(
-                                &crate::core::paths::tmp_dir().join(
-                                    std::path::Path::new(&asset_name)
-                                        .file_name()
-                                        .unwrap_or_default(),
-                                ),
-                            );
+                            // Delete the temp file at its REAL path.
+                            if let Some(tmp) = self.gate_temp_path.clone() {
+                                ui::gate::discard(&tmp);
+                            }
+                            self.gate_temp_path = None;
                             self.gate = GatePhase::Cancelled;
                             self.log("gate: cancelled, temp deleted");
                         }
                         if ui.button("Download anyway").clicked() {
-                            let tmp = crate::core::paths::tmp_dir().join(
-                                std::path::Path::new(&asset_name)
-                                    .file_name()
-                                    .unwrap_or_default(),
-                            );
+                            let tmp = self
+                                .gate_temp_path
+                                .clone()
+                                .unwrap_or_else(|| crate::core::paths::tmp_dir().join(&asset_name));
                             let dl = self.config.download_dir.clone();
                             match ui::gate::deliver(&tmp, &dl) {
                                 Ok(dest) => {
@@ -1062,6 +1133,7 @@ impl App {
                                     self.state.stats.downloads_completed += 1;
                                     self.log(format!("gate: confirmed, delivered {}", dest.display()));
                                     self.gate = GatePhase::Done { path: dest, sha256: sha };
+                                    self.gate_temp_path = None;
                                 }
                                 Err(e) => {
                                     self.gate = GatePhase::Failed(e);

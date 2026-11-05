@@ -13,6 +13,9 @@ pub struct AppState {
     /// Cached verdicts keyed by sha256.
     #[serde(default)]
     pub vt_cache: HashMap<String, VtVerdict>,
+    /// Asset → sha256 mapping from completed downloads (VT badge lookup).
+    #[serde(default)]
+    pub asset_shas: HashMap<String, String>,
     #[serde(default)]
     pub stats: super::models::Stats,
 }
@@ -89,6 +92,7 @@ mod tests {
                 new_release: true,
             }],
             vt_cache,
+            asset_shas: Default::default(),
             stats: super::super::models::Stats {
                 downloads_started: 3,
                 downloads_completed: 2,

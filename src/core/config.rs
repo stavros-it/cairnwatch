@@ -32,7 +32,8 @@ impl Default for Config {
         Self {
             vt_api_key: String::new(),
             vt_upload_fallback: true,
-            download_dir: PathBuf::from("./downloads"),
+            // Exe-relative, not CWD-relative (portability — review fix).
+            download_dir: crate::core::paths::default_download_dir(),
             github_pat: None,
             gitlab_pat: None,
             refresh_concurrency: 4,
@@ -66,7 +67,7 @@ mod tests {
             vt_upload_fallback: false,
             download_dir: PathBuf::from("D:/tmp/dl"),
             github_pat: Some("ghp_x".into()),
-            gitlab_pat: Some("glpat-y".into()),
+            gitlab_pat: Some("glpat_y".into()),
             refresh_concurrency: 7,
             theme: ThemeChoice::Dark,
         };
@@ -76,6 +77,12 @@ mod tests {
         cfg.save(&path).unwrap();
         let back = Config::load(&path).unwrap();
         assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn default_download_dir_is_exe_relative() {
+        let cfg = Config::default();
+        assert!(cfg.download_dir.starts_with(crate::core::paths::app_dir()));
     }
 
     #[test]

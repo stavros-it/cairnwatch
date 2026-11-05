@@ -38,8 +38,9 @@ impl std::fmt::Display for VtError {
 /// Outcome of a hash lookup.
 #[derive(Debug)]
 pub enum LookupOutcome {
-    /// VT has a report with analysis stats.
-    Report(VtVerdict),
+    /// VT has a report with analysis stats (top flagging engines included
+    /// for the flagged dialog — review fix).
+    Report(VtVerdict, Vec<String>),
     /// VT never saw this hash (404) — upload fallback eligible.
     Unknown,
     /// Report exists but was never analysed (null stats).
@@ -51,7 +52,7 @@ pub enum LookupOutcome {
 impl std::fmt::Display for LookupOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LookupOutcome::Report(_) => write!(f, "report"),
+            LookupOutcome::Report(_, _) => write!(f, "report"),
             LookupOutcome::Unknown => write!(f, "unknown to VirusTotal"),
             LookupOutcome::Unscanned => write!(f, "on VirusTotal, never analysed"),
             LookupOutcome::NoVerdict(e) => write!(f, "{e}"),
@@ -70,19 +71,56 @@ pub fn map_stats(sha256: &str, attrs: &Value, retrieved_at: &str) -> LookupOutco
         return LookupOutcome::Unscanned;
     }
     let get = |k: &str| stats.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    LookupOutcome::Report(VtVerdict {
-        sha256: sha256.to_string(),
-        malicious: get("malicious"),
-        suspicious: get("suspicious"),
-        undetected: get("undetected"),
-        harmless: get("harmless"),
-        timeout: get("timeout"),
-        scanned_by_upload: attrs
-            .get("custom_analysis_id")
-            .map(|v| !v.is_null())
-            .unwrap_or(false),
-        retrieved_at: retrieved_at.to_string(),
-    })
+    let engines = top_flagging_engines(attrs);
+    LookupOutcome::Report(
+        VtVerdict {
+            sha256: sha256_to_string(attrs, sha256),
+            malicious: get("malicious"),
+            suspicious: get("suspicious"),
+            undetected: get("undetected"),
+            harmless: get("harmless"),
+            timeout: get("timeout"),
+            scanned_by_upload: attrs
+                .get("custom_analysis_id")
+                .map(|v| !v.is_null())
+                .unwrap_or(false),
+            retrieved_at: retrieved_at.to_string(),
+        },
+        engines,
+    )
+}
+
+/// Parse the top flagging engine names from `last_analysis_results`
+/// (review: flagged dialog must list them). Returns up to 3 names of
+/// engines whose verdict is malicious/suspicious.
+pub fn top_flagging_engines(attrs: &Value) -> Vec<String> {
+    let Some(results) = attrs.get("last_analysis_results") else {
+        return Vec::new();
+    };
+    let Some(map) = results.as_object() else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = map
+        .iter()
+        .filter(|(_, e)| {
+            e.get("category")
+                .and_then(|c| c.as_str())
+                .map(|c| c == "malicious" || c == "suspicious")
+                .unwrap_or(false)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    names.sort();
+    names.truncate(3);
+    names
+}
+
+fn sha256_to_string(attrs: &Value, fallback: &str) -> String {
+    attrs
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn status_to_err(status: reqwest::StatusCode) -> VtError {
@@ -177,7 +215,7 @@ pub async fn poll_once(
         .unwrap_or("");
     let outcome = map_stats(sha, &attrs_obj, &now_rfc3339());
     match outcome {
-        LookupOutcome::Report(v) => Ok(Some(v)),
+        LookupOutcome::Report(v, _) => Ok(Some(v)),
         LookupOutcome::Unscanned => Ok(None),
         other => Err(VtError::Parse(format!("unexpected outcome: {other}"))),
     }
@@ -306,6 +344,7 @@ mod tests {
     #[test]
     fn map_stats_clean_report() {
         let attrs = serde_json::json!({
+            "sha256": SHA,
             "last_analysis_stats": {
                 "malicious": 0, "suspicious": 0, "undetected": 70,
                 "harmless": 0, "timeout": 0, "confirmed-timeout": 0,
@@ -313,13 +352,34 @@ mod tests {
             }
         });
         match map_stats(SHA, &attrs, AT) {
-            LookupOutcome::Report(v) => {
+            LookupOutcome::Report(v, _) => {
                 assert!(!v.is_flagged());
                 assert_eq!(v.malicious, 0);
                 assert_eq!(v.undetected, 70);
+                assert_eq!(v.sha256, SHA);
             }
             other => panic!("expected Report, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn top_engines_lists_flagging_engines_capped_at_3() {
+        let attrs = serde_json::json!({
+            "last_analysis_results": {
+                "Microsoft": {"category": "malicious"},
+                "Kaspersky": {"category": "suspicious"},
+                "ESET": {"category": "malicious"},
+                "Zillya": {"category": "malicious"},
+                "Clean Engine": {"category": "undetected"},
+            }
+        });
+        let engines = top_flagging_engines(&attrs);
+        assert_eq!(engines.len(), 3);
+        assert!(engines.contains(&"Microsoft".to_string()));
+        assert!(engines.contains(&"Kaspersky".to_string()));
+        assert!(!engines.contains(&"Clean Engine".to_string()));
+        // Empty/missing results → empty vec, no panic.
+        assert!(top_flagging_engines(&serde_json::json!({})).is_empty());
     }
 
     #[test]
@@ -331,7 +391,7 @@ mod tests {
             }
         });
         match map_stats(SHA, &attrs, AT) {
-            LookupOutcome::Report(v) => {
+            LookupOutcome::Report(v, _) => {
                 assert!(v.is_flagged());
                 assert_eq!(v.flagged_ratio(), (5, 72));
             }

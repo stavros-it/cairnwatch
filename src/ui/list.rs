@@ -49,6 +49,7 @@ pub fn matches_query(repo: &Repo, query: &str) -> bool {
         repo.owner.clone(),
         repo.category.clone().unwrap_or_default(),
         repo.display_name(),
+        repo.latest.as_ref().map(|l| l.tag.clone()).unwrap_or_default(),
     ];
     haystacks
         .iter()
@@ -166,10 +167,18 @@ mod tests {
     }
 
     #[test]
-    fn fuzzy_matches_name_owner_category() {
+    fn fuzzy_matches_name_owner_category_tag() {
         let mut r = repo("serde", "serde-rs", false, None);
+        r.latest = Some(Release {
+            tag: "v2.9.9".into(),
+            published_at: "2026-11-01T00:00:00Z".into(),
+            prerelease: false,
+            notes: String::new(),
+            assets: vec![],
+        });
         assert!(matches_query(&r, "ser"));
         assert!(matches_query(&r, "serde-rs")); // owner
+        assert!(matches_query(&r, "2.9.9")); // tag (spec)
         r.category = Some("networking".into());
         assert!(matches_query(&r, "netwrkng")); // fuzzy on category
         assert!(!matches_query(&r, "zzz"));

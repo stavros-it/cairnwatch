@@ -5,11 +5,25 @@ use crate::ui::theme::Tokens;
 use crate::ui::widgets;
 use egui::{RichText, ScrollArea, Ui};
 
+/// Per-asset VT display info (from the cache — review fix).
+pub struct AssetVtInfo {
+    /// Cached verdict label, e.g. "0/72" or "3/72".
+    pub label: String,
+    pub flagged: bool,
+    pub sha256: String,
+}
+
 /// Render the detail panel for `repo`. Returns the asset the user clicked
-/// Download on, if any this frame, plus filter edits.
-pub fn show(ui: &mut Ui, repo: &Repo) -> (Option<Asset>, Option<crate::core::models::ReleaseFilters>) {
+/// Download on, filter edits, and a Re-scan request.
+/// `vt_info` maps asset name → cached verdict info for badges.
+pub fn show(
+    ui: &mut Ui,
+    repo: &Repo,
+    vt_info: &dyn Fn(&str) -> Option<AssetVtInfo>,
+) -> (Option<Asset>, Option<crate::core::models::ReleaseFilters>, Option<(String, String)>) {
     let mut clicked: Option<Asset> = None;
     let mut filters_changed: Option<crate::core::models::ReleaseFilters> = None;
+    let mut rescan: Option<(String, String)> = None;
     ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(8.0);
         // Header: name, host, pin.
@@ -136,7 +150,22 @@ pub fn show(ui: &mut Ui, repo: &Repo) -> (Option<Asset>, Option<crate::core::mod
                                         .size(Tokens::DATA)
                                         .color(Tokens::MUTED),
                                 );
-                                widgets::vt_badge(ui, "—", Tokens::MUTED_BG);
+                                // VT badge from cache (review fix) or "—".
+                                if let Some(info) = vt_info(&asset.name) {
+                                    widgets::vt_badge(
+                                        ui,
+                                        &info.label,
+                                        if info.flagged { Tokens::DESTRUCTIVE } else { Tokens::ACCENT },
+                                    );
+                                    if ui
+                                        .button(RichText::new("Re-scan").size(Tokens::DATA))
+                                        .clicked()
+                                    {
+                                        rescan = Some((asset.name.clone(), info.sha256.clone()));
+                                    }
+                                } else {
+                                    widgets::vt_badge(ui, "—", Tokens::MUTED_BG);
+                                }
                                 if ui
                                     .button(RichText::new("Download").size(Tokens::DATA))
                                     .clicked()
@@ -197,7 +226,7 @@ pub fn show(ui: &mut Ui, repo: &Repo) -> (Option<Asset>, Option<crate::core::mod
             }
         }
     });
-    (clicked, filters_changed)
+    (clicked, filters_changed, rescan)
 }
 
 fn release_page_url(repo: &Repo, tag: &str) -> String {
@@ -226,14 +255,16 @@ pub fn format_bytes(n: u64) -> String {
     }
 }
 
-/// Browser-open shim (webbrowser crate not added; shell out).
+/// Browser-open shim. Uses rundll32 FileProtocolHandler on Windows —
+/// `cmd /C start` with an unquoted URL allows argument injection
+/// (e.g. a git tag containing `&`), a review CRITICAL.
 pub mod open {
     pub fn url(url: &str) -> std::io::Result<()> {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            std::process::Command::new("cmd")
-                .args(["/C", "start", "", url])
+            std::process::Command::new("rundll32")
+                .args(["url.dll,FileProtocolHandler", url])
                 .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
                 .spawn()?;
         }

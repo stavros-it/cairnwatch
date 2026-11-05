@@ -65,16 +65,16 @@ pub fn phase_after_scan(
 ) -> (GatePhase, Option<VtVerdict>) {
     use crate::net::vt::LookupOutcome as LO;
     match outcome {
-        LO::Report(v) if !v.is_flagged() => {
+        LO::Report(v, engines) if !v.is_flagged() => {
             let v = VtVerdict { sha256: sha.to_string(), ..v.clone() };
             (GatePhase::Clean { path: temp_path, sha256: sha.to_string() }, Some(v))
         }
-        LO::Report(v) => {
+        LO::Report(v, engines) => {
             let v = VtVerdict { sha256: sha.to_string(), ..v.clone() };
             (
                 GatePhase::AwaitingConfirm(ConfirmKind::Flagged {
                     verdict: v.clone(),
-                    top_engines: Vec::new(), // filled by UI from the report
+                    top_engines: engines.clone(),
                 }),
                 Some(v),
             )
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn clean_verdict_delivers_without_confirm() {
-        let out = LookupOutcome::Report(verdict(0, 0));
+        let out = LookupOutcome::Report(verdict(0, 0), vec![]);
         let dir = std::env::temp_dir().join("girust_gate_clean");
         std::fs::create_dir_all(&dir).unwrap();
         let tmp = temp_file(&dir, "clean.exe");
@@ -157,15 +157,17 @@ mod tests {
 
     #[test]
     fn flagged_verdict_awaits_confirm_with_cancel_default() {
-        let out = LookupOutcome::Report(verdict(3, 2));
+        let engines = vec!["Microsoft".into(), "Kaspersky".into()];
+        let out = LookupOutcome::Report(verdict(3, 2), engines.clone());
         let dir = std::env::temp_dir().join("girust_gate_flagged");
         std::fs::create_dir_all(&dir).unwrap();
         let tmp = temp_file(&dir, "flag.exe");
         let (phase, cached) = phase_after_scan(&out, "abc", tmp);
         match phase {
-            GatePhase::AwaitingConfirm(ConfirmKind::Flagged { verdict, .. }) => {
+            GatePhase::AwaitingConfirm(ConfirmKind::Flagged { verdict, top_engines }) => {
                 assert!(verdict.is_flagged());
                 assert_eq!(verdict.flagged_ratio(), (5, 75));
+                assert_eq!(top_engines, engines);
                 assert!(cached.is_some());
             }
             other => panic!("expected AwaitingConfirm(Flagged), got {other:?}"),
@@ -234,7 +236,7 @@ mod tests {
         // DownloadAsset's scan step.
         let mut cache = std::collections::HashMap::new();
         cache.insert("abc".to_string(), verdict(0, 0));
-        let (phase, _) = phase_after_scan(&LookupOutcome::Report(cache["abc"].clone()), "abc", PathBuf::from("x"));
+        let (phase, _) = phase_after_scan(&LookupOutcome::Report(cache["abc"].clone(), vec![]), "abc", PathBuf::from("x"));
         assert!(matches!(phase, GatePhase::Clean { .. }));
     }
 }
