@@ -59,9 +59,23 @@ Three layers, one binary:
   Pure; fully unit-tested.
 - `src/net/` — reqwest clients (GitHub, GitLab, VirusTotal), download
   engine (streams to `tmp/*.part`, sha256 while streaming), command bus
-  (worker thread + tokio runtime; UI sends `Command`s, receives `Event`s).
-  VT throttle: 1 request / 16 s. No background timers.
-- `src/ui/` — eframe shell: theme (from design tokens), list, detail,
-  gate (download/VT state machine), settings, diagnostics views.
+  (worker thread + tokio runtime; UI sends `Command`s, receives `Event`s;
+  download/refresh flows spawn as tasks so commands never queue behind a
+  10-minute VT poll). VT throttle: 1 request / 16 s, enforced by sleeping.
+  No background timers.
+- `src/ui/` — eframe shell: theme (Telemetry Room tokens), list, detail
+  (VT badges per asset + Re-scan), gate (download/VT state machine;
+  flagged/unverified confirms carry the real temp path; cancel is wired
+  through the bus), settings (save-on-change), diagnostics views.
 
-Status: see `ROADMAP.md`.
+Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
+fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.
+
+## Known limitations
+
+- Dark theme only (design system: light not recommended; user-approved).
+- Import reads a fixed file next to the exe (`girust-export.json` /
+  `.enc`); no native file picker (portability).
+- VT engine list absent for uploaded-by-us verdicts (analysis payloads
+  carry stats only, not per-engine results).
+- Deferred minors in `ROADMAP.md` post-1.0 backlog.

@@ -31,4 +31,14 @@ Status: planned → in progress → done. Update after every task.
 
 ## M6 — Ship
 - [x] Task 11: Icon + packaging
-- [ ] Task 12: Final review + verification pass
+- [x] Task 12: Final review + verification pass
+
+## Post-1.0 backlog (deferred minors from the final review)
+- [ ] tmp/ startup cleanup of stale temp files
+- [ ] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
+- [ ] "Last checked" sort needs a last-check field per repo
+- [ ] Asset date column in detail table
+- [ ] Rate-limit reset as local-time countdown instead of raw epoch
+- [ ] Timestamps + full API-call coverage + configurable ring size in logs
+- [ ] CSPRNG salt/IV (getrandom) for export encryption
+- [ ] Smoke test against the app's own client/DTO code
