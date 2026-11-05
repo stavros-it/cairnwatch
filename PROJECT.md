@@ -1,0 +1,67 @@
+# PROJECT.md — GiRustStatus Project Context
+
+Written for any person or agent picking this project up cold. Keep current;
+update when decisions change.
+
+## What it is
+
+Portable Windows desktop app (Rust + egui). Tracks GitHub/GitLab repos the
+user follows (added by pasting URLs, never account-synced). On manual
+Refresh, fetches each repo's latest release. Downloads assets on demand —
+never installs (user installs manually). Every download is gated by a
+VirusTotal scan: hash lookup first, upload fallback second; flagged files
+block behind an explicit confirmation.
+
+Inspiration: Obtainium+ (`ObtainiumPlus-main/`, read-only reference, excluded
+from git). Borrowed concepts: release tracking from source, categories/pins,
+VT safety scan (ours uses the real VT API, Obtainium+ only links out),
+log viewer, rate-limit health, import/export, statistics. Dropped by design:
+all Android-specific features, background polling, 30+ source types.
+
+## Locked decisions (user-approved)
+
+- Rust + egui/eframe. No web tech. Single binary.
+- Fully portable: config (`config.toml`), state (`repos.json`), `tmp/`,
+  `downloads/` all next to the exe. No registry, no installer, no writes
+  outside the app folder (except user-chosen download dir). eframe's own
+  persistence API is NOT used.
+- Manual refresh only — no background polling, no notifications/toasts.
+- Sources: GitHub + GitLab (incl. self-hosted GitLab). Nothing else.
+- VT flow: download to temp → SHA-256 → hash lookup (`GET /v3/files/{sha}`)
+  → verdict. 404 → upload fallback (`POST /v3/files`, >32 MB via upload_url,
+  poll `/v3/analyses/{id}` 30 s interval, 10 min timeout), toggle default ON.
+  Flagged (malicious+susp > 0) → blocking dialog, Cancel default. No verdict
+  obtainable (no key/401/429/network/upload-off/too-large/timeout) → yellow
+  "unverified" + warn-and-confirm, never a silent pass or hard block.
+- Prerelease-only repos are trackable ("no stable release yet" status);
+  per-repo filters: prerelease include, tag regex, asset name glob.
+- VT key and PATs in plaintext config — accepted trade-off for portability.
+- Anonymous GitHub by default (60 req/hr), optional PAT.
+- App icon: exe resource (`winresource`) + egui window icon; art: dark slate
+  rounded square, radar-sweep arc, shield cutout, green accent.
+
+## Layout
+
+- `docs/superpowers/specs/2026-11-05-giruststatus-design.md` — approved design
+- `docs/superpowers/plans/2026-11-05-giruststatus.md` — task plan (12 tasks)
+- `ROADMAP.md` — milestone status
+- `AGENTS.md` — working protocol: checkpoint (prompt user for model+effort
+  after each task), per-task checklist (update ROADMAP → update this file if
+  needed → verify → commit), model/effort mapping table, project rules
+- `design-system/giruststatus/MASTER.md` — UI tokens (generated Task 1,
+  gitignored)
+- `ObtainiumPlus-main/` — read-only reference
+
+## Architecture
+
+Three layers, one binary:
+- `src/core/` — models, config, state, paths, URL parsing, import/export.
+  Pure; fully unit-tested.
+- `src/net/` — reqwest clients (GitHub, GitLab, VirusTotal), download
+  engine (streams to `tmp/*.part`, sha256 while streaming), command bus
+  (worker thread + tokio runtime; UI sends `Command`s, receives `Event`s).
+  VT throttle: 1 request / 16 s. No background timers.
+- `src/ui/` — eframe shell: theme (from design tokens), list, detail,
+  gate (download/VT state machine), settings, diagnostics views.
+
+Status: see `ROADMAP.md`.
