@@ -15,7 +15,7 @@ Status: planned → in progress → done. Update after every task.
 
 ## M2 — Sources
 - [x] Task 3: Repo URL parsing
-- [ ] Task 4: GitHub + GitLab release clients
+- [x] Task 4: GitHub + GitLab release clients
 
 ## M3 — Core feature
 - [ ] Task 5: VirusTotal client + download engine + command bus
