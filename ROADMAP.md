@@ -14,7 +14,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 2: Core state — models, config, persistence
 
 ## M2 — Sources
-- [ ] Task 3: Repo URL parsing
+- [x] Task 3: Repo URL parsing
 - [ ] Task 4: GitHub + GitLab release clients
 
 ## M3 — Core feature
