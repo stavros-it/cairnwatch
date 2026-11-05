@@ -23,7 +23,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 7: Download + VT gate UX
 
 ## M4 — Organization
-- [ ] Task 8: Search, sort, pins, filters polish
+- [x] Task 8: Search, sort, pins, filters polish
 
 ## M5 — Diagnostics & portability
 - [ ] Task 9: Diagnostics — logs, rate panel, statistics
