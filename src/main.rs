@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod core;
+mod net;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
