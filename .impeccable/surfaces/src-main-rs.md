@@ -45,6 +45,13 @@ seen), status pill; one row mid-scan with amber bottom progress hairline;
 category ribbon on trailing edge. Matches
 `.impeccable/mocks/decision/assigned-telemetry-room.html`.
 
+ACCESSIBILITY (user-locked): target display 1920x1080, single window.
+User is 45+, wears eyeglasses: base text >= 16px, monospace data
+(tags/dates/pills/hashes) 14-15px, NOTHING below 12px anywhere. Muted
+foreground raised to #A8B5C7 for small-size contrast on #1B2336. Row
+height ~64px, hit targets >= 44px, focus ring 2px. Bump every MASTER.md
+type size up one step when implementing the egui theme.
+
 FORM: Telemetry Room, position 1 of my grounded list, fused from the roll's
 assigned slot. SEED REFERENCE: seed:1a2111ead84a42f0.
 

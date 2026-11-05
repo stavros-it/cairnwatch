@@ -83,3 +83,7 @@ accent.
 Colorblind-safe status/NEW indicators (no information in color alone;
 text prefixes + position carry meaning). Keyboard navigation (egui
 built-in). Visible focus states required by the design system.
+User vision constraints: 45+, eyeglasses, 1920x1080 display. Minimum
+body text 16px, monospace data 14px, hard floor 12px. High-contrast
+muted text (#A8B5C7 on panel). Row heights ~64px, hit targets >= 44px,
+2px focus rings.
