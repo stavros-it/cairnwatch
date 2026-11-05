@@ -36,8 +36,22 @@ impl RateLimits {
                 _ => {}
             }
         }
+        // Record as the latest observed state (rates view reads this).
+        *latest().lock().unwrap() = rl.clone();
         rl
     }
+}
+
+/// Process-global latest observed limits, read by the bus after any fetch.
+static LATEST: std::sync::OnceLock<std::sync::Mutex<RateLimits>> = std::sync::OnceLock::new();
+
+fn latest() -> &'static std::sync::Mutex<RateLimits> {
+    LATEST.get_or_init(|| std::sync::Mutex::new(RateLimits::default()))
+}
+
+/// Snapshot of the most recent rate-limit headers seen on any API response.
+pub fn latest_snapshot() -> RateLimits {
+    latest().lock().unwrap().clone()
 }
 
 #[cfg(test)]

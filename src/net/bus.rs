@@ -88,6 +88,12 @@ fn fetch_error_status(repo: &Repo, e: FetchError) -> Repo {
     r
 }
 
+/// Forward rate-limit headers from any response to the UI.
+fn report_limits(event_tx: &tokio::sync::mpsc::UnboundedSender<Event>, resp: &reqwest::Response) {
+    let rl = RateLimits::from_headers(resp.headers());
+    let _ = event_tx.send(Event::RateLimitsUpdated(rl));
+}
+
 fn gl_error_status(repo: &Repo, e: GlError) -> Repo {
     let mut r = repo.clone();
     r.status = match e {
@@ -102,9 +108,14 @@ fn gl_error_status(repo: &Repo, e: GlError) -> Repo {
 
 /// Fetch one repo's latest release applying its filters; update its
 /// NEW/status state. Core of RefreshAll and AddRepo.
-async fn refresh_one(client: &reqwest::Client, repo: &Repo, config: &Config) -> Repo {
+/// `limits_out` accumulates rate-limit headers from the responses.
+async fn refresh_one(
+    client: &reqwest::Client,
+    repo: &Repo,
+    config: &Config,
+    limits_out: &mut RateLimits,
+) -> Repo {
     let mut r = repo.clone();
-    let mut rate_limits = RateLimits::default();
     match &r.host {
         RepoHost::GitHub => {
             let pat = config.github_pat.as_deref();
@@ -149,7 +160,8 @@ async fn refresh_one(client: &reqwest::Client, repo: &Repo, config: &Config) -> 
             }
         }
     }
-    let _ = &mut rate_limits;
+    // Header capture: latest_snapshot records what the last response sent.
+    *limits_out = crate::net::ratelimits::latest_snapshot();
     // NEW detection: latest tag differs from the last seen tag.
     if let Some(rel) = &r.latest {
         let is_new = match &r.last_seen_tag {
@@ -192,14 +204,24 @@ pub fn spawn(
                             config.refresh_concurrency.max(1) as usize,
                         ));
                         let mut handles = Vec::new();
+                        let limits = std::sync::Arc::new(std::sync::Mutex::new(RateLimits::default()));
                         for repo in repos {
                             let _permit = sem.clone().acquire_owned().await;
                             let config = config.clone();
                             let event_tx = event_tx.clone();
                             let client = client.clone();
+                            let limits = limits.clone();
                             handles.push(tokio::spawn(async move {
-                                let updated = refresh_one(&client, &repo, &config).await;
+                                let mut out = RateLimits::default();
+                                let updated = refresh_one(&client, &repo, &config, &mut out).await;
+                                {
+                                    let mut l = limits.lock().unwrap();
+                                    *l = out;
+                                }
                                 let _ = event_tx.send(Event::RepoUpdated(updated));
+                                let _ = event_tx.send(Event::RateLimitsUpdated(
+                                    crate::net::ratelimits::latest_snapshot(),
+                                ));
                             }));
                         }
                         for h in handles {
@@ -234,7 +256,7 @@ pub fn spawn(
                             status: RepoStatus::Ok,
                             new_release: false,
                         };
-                        let fresh = refresh_one(&client, &repo, &config).await;
+                        let fresh = refresh_one(&client, &repo, &config, &mut RateLimits::default()).await;
                         let ok = !matches!(fresh.status, RepoStatus::Error(_) | RepoStatus::RateLimited);
                         let _ = event_tx.send(Event::AddResult(if ok { Ok(fresh) } else { Err(format!("{:?}", fresh.status)) }));
                     }

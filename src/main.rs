@@ -14,6 +14,16 @@ use std::sync::Arc;
 use ui::gate::GatePhase;
 use ui::list::SortKey;
 
+/// Which view the rail shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    Repos,
+    Logs,
+    Rates,
+    Stats,
+    Settings,
+}
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -51,6 +61,9 @@ struct App {
     // Task 8: context-menu driven state.
     category_dialog_for: Option<String>,
     category_draft: String,
+    // Task 9: nav + diagnostics state.
+    view: View,
+    live_rate_limits: crate::net::ratelimits::RateLimits,
     // VT gate (Task 7): exactly one download at a time.
     gate: GatePhase,
     gate_asset_name: String,
@@ -91,6 +104,8 @@ impl App {
             log_ring: VecDeque::with_capacity(500),
             category_dialog_for: None,
             category_draft: String::new(),
+            view: View::Repos,
+            live_rate_limits: Default::default(),
             gate: GatePhase::Idle,
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
@@ -119,24 +134,31 @@ impl eframe::App for App {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(16.0);
-                ui.add_enabled_ui(true, |ui| {
-                    ui.label(
-                        egui::RichText::new("GiRustStatus")
-                            .size(ui::theme::Tokens::BODY)
-                            .strong(),
-                    );
-                });
-                ui.add_space(16.0);
-                // Single view for now (Repos); nav lands in Task 9.
-                let active = egui::RichText::new("Repos")
-                    .size(ui::theme::Tokens::BODY)
-                    .color(ui::theme::Tokens::TEXT);
-                let _ = ui.selectable_label(true, active);
-                for item in ["Logs", "Rates", "Stats", "Settings"] {
-                    let dim = egui::RichText::new(item)
+                ui.label(
+                    egui::RichText::new("GiRustStatus")
                         .size(ui::theme::Tokens::BODY)
-                        .color(ui::theme::Tokens::MUTED);
-                    let _ = ui.selectable_label(false, dim);
+                        .strong(),
+                );
+                ui.add_space(16.0);
+                for (item, view) in [
+                    ("Repos", View::Repos),
+                    ("Logs", View::Logs),
+                    ("Rates", View::Rates),
+                    ("Stats", View::Stats),
+                    ("Settings", View::Settings),
+                ] {
+                    let active = self.view == view;
+                    let label = egui::RichText::new(item)
+                        .size(ui::theme::Tokens::BODY)
+                        .color(if active {
+                            ui::theme::Tokens::TEXT
+                        } else {
+                            ui::theme::Tokens::MUTED
+                        });
+                    let resp = ui.selectable_label(active, label);
+                    if resp.clicked() {
+                        self.view = view;
+                    }
                 }
             });
 
@@ -157,10 +179,40 @@ impl eframe::App for App {
                         });
                 }
 
-                if self.selected_repo.is_some() {
-                    self.show_detail(ui);
-                } else {
-                    self.show_list(ui);
+                match self.view {
+                    View::Repos => {
+                        if self.selected_repo.is_some() {
+                            self.show_detail(ui);
+                        } else {
+                            self.show_list(ui);
+                        }
+                    }
+                    View::Logs => {
+                        let export = ui::logs::show(ui, &self.log_ring);
+                        if export {
+                            let path = crate::core::paths::app_dir().join("girust-log.txt");
+                            let all: Vec<&str> = self.log_ring.iter().map(|s| s.as_str()).collect();
+                            match std::fs::write(&path, all.join("\n")) {
+                                Ok(_) => self.log(format!("log exported: {}", path.display())),
+                                Err(e) => self.log(format!("log export failed: {e}")),
+                            }
+                        }
+                    }
+                    View::Rates => {
+                        ui::rates::show(ui, &self.live_rate_limits);
+                    }
+                    View::Stats => {
+                        let new_count = self.state.repos.iter().filter(|r| r.new_release).count();
+                        ui::rates::show_stats(ui, &self.state.stats, self.state.repos.len(), new_count);
+                    }
+                    View::Settings => {
+                        // Task 10 fills the settings view.
+                        ui.heading("Settings");
+                        ui.label(
+                            egui::RichText::new("Settings view arrives in the next milestone.")
+                                .color(ui::theme::Tokens::MUTED),
+                        );
+                    }
                 }
             });
 
@@ -263,8 +315,8 @@ impl App {
                     }
                 }
                 Event::LogLine(line) => self.log(line),
-                Event::RateLimitsUpdated(_rl) => {
-                    // Task 9 renders the rate panel.
+                Event::RateLimitsUpdated(rl) => {
+                    self.live_rate_limits = rl;
                 }
                 Event::RefreshDone => {
                     self.refresh_in_flight.store(false, Ordering::Relaxed);
