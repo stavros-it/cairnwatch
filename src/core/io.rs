@@ -65,8 +65,8 @@ fn random_bytes(n: usize) -> Vec<u8> {
     let mut ctr = 0u128;
     while out.len() < n {
         let mut h = sha2::Sha256::new();
-        sha2::Digest::update(&mut h, &seed.to_le_bytes());
-        sha2::Digest::update(&mut h, &ctr.to_le_bytes());
+        sha2::Digest::update(&mut h, seed.to_le_bytes());
+        sha2::Digest::update(&mut h, ctr.to_le_bytes());
         out.extend_from_slice(&sha2::Digest::finalize(h));
         ctr += 1;
     }

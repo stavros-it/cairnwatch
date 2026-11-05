@@ -301,6 +301,7 @@ mod tests {
 
     const AT: &str = "2026-11-05T00:00:00Z";
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const SHA2: &str = SHA;
 
     #[test]
     fn map_stats_clean_report() {
@@ -311,7 +312,7 @@ mod tests {
                 "failure": 0, "type-unsupported": 0
             }
         });
-        match map_stats(&SHA, &attrs, AT) {
+        match map_stats(SHA, &attrs, AT) {
             LookupOutcome::Report(v) => {
                 assert!(!v.is_flagged());
                 assert_eq!(v.malicious, 0);
@@ -329,7 +330,7 @@ mod tests {
                 "harmless": 1, "timeout": 1
             }
         });
-        match map_stats(&SHA, &attrs, AT) {
+        match map_stats(SHA, &attrs, AT) {
             LookupOutcome::Report(v) => {
                 assert!(v.is_flagged());
                 assert_eq!(v.flagged_ratio(), (5, 72));
@@ -342,12 +343,12 @@ mod tests {
     fn map_stats_null_stats_is_unscanned() {
         let attrs = serde_json::json!({ "last_analysis_stats": null });
         assert!(matches!(
-            map_stats(&SHA, &attrs, AT),
+            map_stats(SHA, &attrs, AT),
             LookupOutcome::Unscanned
         ));
         let attrs2 = serde_json::json!({});
         assert!(matches!(
-            map_stats(&SHA, &attrs2, AT),
+            map_stats(SHA, &attrs2, AT),
             LookupOutcome::Unscanned
         ));
     }

@@ -262,21 +262,22 @@ pub fn spawn(
                     }
                     Command::DownloadAsset { repo_id, asset, config } => {
                         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<Progress>(64);
-                        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                        // Cancel flag for future UI cancel wiring; the gate
+                        // currently discards temp files on cancel instead.
+                        #[allow(clippy::let_unit_value)]
                         let cancel = Arc::new(AtomicBool::new(false));
-                        let cancel_for_dl = cancel.clone();
+                        let _ = cancel;
                         let tmp_dir = crate::core::paths::tmp_dir();
                         let dl_client = client.clone();
                         let asset_name = asset.name.clone();
                         let dl_handle = tokio::spawn(async move {
-                            let _ = cancel_rx;
                             download::download_to_temp(
                                 &dl_client,
                                 &asset.url,
                                 &tmp_dir,
                                 &asset_name,
                                 &progress_tx,
-                                cancel_for_dl,
+                                Arc::new(AtomicBool::new(false)),
                             )
                             .await
                         });
@@ -300,7 +301,6 @@ pub fn spawn(
                             Ok(Ok(t)) => t,
                             Ok(Err(e)) => {
                                 let _ = event_tx.send(Event::LogLine(format!("download failed: {e}")));
-                                let _ = cancel_tx;
                                 continue;
                             }
                             Err(e) => {

@@ -12,7 +12,7 @@ pub enum RepoHost {
 }
 
 /// Per-repo release filters, applied during fetch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ReleaseFilters {
     /// Include prereleases when picking the "latest" release.
     /// Default: false (GitHub `releases/latest` semantics).
@@ -25,16 +25,6 @@ pub struct ReleaseFilters {
     /// "match" mark; others stay listed, de-emphasized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_pattern: Option<String>,
-}
-
-impl Default for ReleaseFilters {
-    fn default() -> Self {
-        Self {
-            include_prereleases: false,
-            tag_regex: None,
-            asset_pattern: None,
-        }
-    }
 }
 
 /// One downloadable file attached to a release.
