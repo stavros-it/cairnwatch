@@ -13,20 +13,32 @@ pub struct AssetVtInfo {
     pub sha256: String,
 }
 
+/// Per-asset action results from the detail panel: Download, filter
+/// edits, Re-scan request, Remove-repo request.
+pub struct DetailActions {
+    pub download: Option<Asset>,
+    pub filters_changed: Option<crate::core::models::ReleaseFilters>,
+    pub rescan: Option<(String, String)>,
+    pub remove: bool,
+}
+
 /// Render the detail panel for `repo`. Returns the asset the user clicked
-/// Download on, filter edits, and a Re-scan request.
+/// Download on, filter edits, a Re-scan request, and a Remove-repo request.
 /// `vt_info` maps asset name → cached verdict info for badges.
 pub fn show(
     ui: &mut Ui,
     repo: &Repo,
     vt_info: &dyn Fn(&str) -> Option<AssetVtInfo>,
-) -> (Option<Asset>, Option<crate::core::models::ReleaseFilters>, Option<(String, String)>) {
-    let mut clicked: Option<Asset> = None;
-    let mut filters_changed: Option<crate::core::models::ReleaseFilters> = None;
-    let mut rescan: Option<(String, String)> = None;
+) -> DetailActions {
+    let mut actions = DetailActions {
+        download: None,
+        filters_changed: None,
+        rescan: None,
+        remove: false,
+    };
     ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(8.0);
-        // Header: name, host, pin.
+        // Header: name, host, pin, remove.
         ui.horizontal(|ui| {
             ui.heading(RichText::new(repo.display_name()).size(Tokens::BODY + 6.0));
             let host_label = match &repo.host {
@@ -37,6 +49,22 @@ pub fn show(
             if repo.pinned {
                 ui.label(RichText::new("📌 pinned").size(Tokens::SMALL + 2.0).color(Tokens::MUTED));
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Remove affordance: visible button (the right-click
+                // context menu on the list row was the only path before —
+                // undiscoverable; users read this as "cannot remove").
+                let remove = egui::Button::new(
+                    RichText::new("Remove repo").size(Tokens::SMALL + 2.0),
+                )
+                .fill(Tokens::MUTED_BG);
+                if ui
+                    .add(remove)
+                    .on_hover_text("Remove this repo from the list (its downloads are kept)")
+                    .clicked()
+                {
+                    actions.remove = true;
+                }
+            });
         });
         ui.add_space(8.0);
 
@@ -53,7 +81,7 @@ pub fn show(
                         .checkbox(&mut filters.include_prereleases, "Include prereleases")
                         .changed()
                     {
-                        filters_changed = Some(filters);
+                        actions.filters_changed = Some(filters);
                     }
                 });
                 ui.horizontal(|ui| {
@@ -67,7 +95,7 @@ pub fn show(
                     if re_field.changed() {
                         let mut f = repo.filters.clone();
                         f.tag_regex = if tag_re.is_empty() { None } else { Some(tag_re) };
-                        filters_changed = Some(f);
+                        actions.filters_changed = Some(f);
                     }
                     if !valid {
                         ui.label(RichText::new("invalid").size(Tokens::SMALL).color(Tokens::DESTRUCTIVE));
@@ -82,7 +110,7 @@ pub fn show(
                     if pat_field.changed() {
                         let mut f = repo.filters.clone();
                         f.asset_pattern = if pat.trim().is_empty() { None } else { Some(pat) };
-                        filters_changed = Some(f);
+                        actions.filters_changed = Some(f);
                     }
                     ui.label(RichText::new("matching assets sort first").size(Tokens::SMALL).color(Tokens::MUTED));
                 });
@@ -161,7 +189,7 @@ pub fn show(
                                         .button(RichText::new("Re-scan").size(Tokens::DATA))
                                         .clicked()
                                     {
-                                        rescan = Some((asset.name.clone(), info.sha256.clone()));
+                                        actions.rescan = Some((asset.name.clone(), info.sha256.clone()));
                                     }
                                 } else {
                                     widgets::vt_badge(ui, "—", Tokens::MUTED_BG);
@@ -170,7 +198,7 @@ pub fn show(
                                     .button(RichText::new("Download").size(Tokens::DATA))
                                     .clicked()
                                 {
-                                    clicked = Some(asset.clone());
+                                    actions.download = Some(asset.clone());
                                 }
                             });
                             ui.add_space(4.0);
@@ -226,7 +254,7 @@ pub fn show(
             }
         }
     });
-    (clicked, filters_changed, rescan)
+    actions
 }
 
 fn release_page_url(repo: &Repo, tag: &str) -> String {

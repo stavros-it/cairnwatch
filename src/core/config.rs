@@ -43,10 +43,15 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Result<Config, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("read config: {e}"))?;
-        toml::from_str(&text).map_err(|e| format!("parse config: {e}"))
+    /// Load from `path`. A missing file is `Missing` (first run — show
+    /// defaults silently); anything else is `Corrupt` (warn before any
+    /// settings save overwrites the file).
+    pub fn load(path: &Path) -> Result<Config, LoadError> {
+        let text = std::fs::read_to_string(path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => LoadError::Missing,
+            _ => LoadError::Corrupt(format!("read config: {e}")),
+        })?;
+        toml::from_str(&text).map_err(|e| LoadError::Corrupt(format!("parse config: {e}")))
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -54,6 +59,14 @@ impl Config {
             toml::to_string_pretty(self).map_err(|e| format!("serialize config: {e}"))?;
         std::fs::write(path, text).map_err(|e| format!("write config: {e}"))
     }
+}
+
+/// Why a config load failed. `Missing` is normal first-run state;
+/// `Corrupt` must be surfaced before the user saves over the file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LoadError {
+    Missing,
+    Corrupt(String),
 }
 
 #[cfg(test)]
@@ -86,10 +99,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_config_file_maps_to_error_not_panic() {
+    fn missing_config_file_maps_to_missing_not_corrupt() {
         let p = std::env::temp_dir().join("girust_cfg_missing.toml");
         let _ = std::fs::remove_file(&p);
-        assert!(Config::load(&p).is_err());
+        assert_eq!(Config::load(&p), Err(LoadError::Missing));
+    }
+
+    #[test]
+    fn missing_config_error_is_not_corrupt_so_no_banner() {
+        // Regression: Windows reads a missing file as
+        // "The system cannot find the file specified. (os error 2)"; the
+        // old string-sniffing treated that as corruption and showed the
+        // overwrite-warning banner on every first run.
+        let p = std::env::temp_dir().join("girust_cfg_missing2.toml");
+        let _ = std::fs::remove_file(&p);
+        if let Err(LoadError::Corrupt(_)) = Config::load(&p) {
+            panic!("missing file must not be Corrupt");
+        }
     }
 
     #[test]

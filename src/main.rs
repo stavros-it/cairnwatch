@@ -121,11 +121,12 @@ impl App {
         };
         let (config, config_error) = match Config::load(&crate::core::paths::config_file()) {
             Ok(c) => (c, None),
-            // Corrupt config: keep defaults in memory but DON'T write them
+            // Missing file: normal first run, defaults, no banner.
+            // Corrupt file: keep defaults in memory but DON'T write them
             // over the file until the user changes something intentionally
             // (review: silent reset loses VT key/PATs).
-            Err(e) if e.contains("No such file") || e.contains("not found") || e.contains("(os 2") => (Config::default(), None),
-            Err(e) => (Config::default(), Some(e)),
+            Err(crate::core::config::LoadError::Missing) => (Config::default(), None),
+            Err(crate::core::config::LoadError::Corrupt(e)) => (Config::default(), Some(e)),
         };
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -560,6 +561,15 @@ impl App {
                             .size(ui::theme::Tokens::BODY)
                             .color(ui::theme::Tokens::MUTED),
                         );
+                        if !self.state.repos.is_empty() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Tip: right-click a repo for pin, category and remove",
+                                )
+                                .size(ui::theme::Tokens::SMALL)
+                                .color(ui::theme::Tokens::MUTED),
+                            );
+                        }
                     });
                 }
                 for repo in sorted {
@@ -658,7 +668,8 @@ impl App {
                             if row_response.clicked() {
                                 clicked_repo = Some(repo.id.clone());
                             }
-                            let row_hover = row_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let row_hover = row_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Click for details · right-click for pin, category, remove");
                             // Context menu: pin, category, remove.
                             row_hover.context_menu(|ui| {
                                 let pin_label = if repo.pinned { "Unpin" } else { "Pin to top" };
@@ -830,8 +841,23 @@ impl App {
                 sha256: sha.clone(),
             })
         };
-        let (asset_clicked, filters_changed, rescan) = ui::detail::show(ui, &repo, &vt_info);
-        if let Some((asset_name, sha256)) = rescan {
+        let actions = ui::detail::show(ui, &repo, &vt_info);
+        if actions.remove {
+            // Don't remove mid-gate: the dialog would reference a dead repo.
+            let gate_busy_for_this =
+                matches!(self.gate, GatePhase::Downloading { .. } | GatePhase::Scanning)
+                    && self.gate_repo_id == repo.id;
+            if gate_busy_for_this {
+                self.log("remove blocked: download/scan in progress for this repo");
+            } else {
+                let name = repo.display_name();
+                self.state.repos.retain(|r| r.id != repo.id);
+                self.selected_repo = None;
+                self.log(format!("repo removed: {name}"));
+                self.save_state();
+            }
+        }
+        if let Some((asset_name, sha256)) = actions.rescan {
             self.send(Command::RescanAsset {
                 repo_id: repo.id.clone(),
                 asset_name,
@@ -840,14 +866,14 @@ impl App {
             });
             self.log("re-scan requested");
         }
-        if let Some(f) = filters_changed {
+        if let Some(f) = actions.filters_changed {
             if let Some(r) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
                 r.filters = f;
             }
             self.save_state();
             self.log("filters updated");
         }
-        if let Some(asset) = asset_clicked {
+        if let Some(asset) = actions.download {
             if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
                 self.log("download blocked: another download is in the gate");
                 return;

@@ -32,6 +32,8 @@ Status: planned → in progress → done. Update after every task.
 ## M6 — Ship
 - [x] Task 11: Icon + packaging
 - [x] Task 12: Final review + verification pass
+- [x] Fix: config missing-file misclassified as corrupt (Windows os error 2 string-sniff) — typed LoadError
+- [x] Fix: repo removal undiscoverable — Remove button in detail view + right-click hint
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files
