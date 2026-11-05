@@ -3,6 +3,9 @@
 //! dead-code allow is crate-scoped to this module only.
 #![allow(dead_code)]
 
+pub mod bus;
+pub mod download;
 pub mod gh;
 pub mod gl;
 pub mod ratelimits;
+pub mod vt;

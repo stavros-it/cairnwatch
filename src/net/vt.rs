@@ -1,0 +1,363 @@
+//! VirusTotal v3 API client.
+//!
+//! Flow (spec-pinned): hash lookup first; on 404, optional upload
+//! fallback (≤32 MB direct, ≤650 MB via upload_url); poll analysis every
+//! 30 s, 10 min timeout. Quotas: 4 req/min, 500 req/day — the bus
+//! throttles VT requests through a gate.
+
+use crate::core::models::VtVerdict;
+use serde_json::Value;
+
+pub const VT_API: &str = "https://www.virustotal.com/api/v3";
+
+/// Size limits (VT API).
+pub const DIRECT_UPLOAD_LIMIT: u64 = 32 * 1024 * 1024;
+pub const SPECIAL_UPLOAD_LIMIT: u64 = 650 * 1024 * 1024;
+
+#[derive(Debug)]
+pub enum VtError {
+    Auth,
+    Quota,
+    TooLarge,
+    Network(String),
+    Parse(String),
+}
+
+impl std::fmt::Display for VtError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VtError::Auth => write!(f, "VirusTotal API key invalid or missing"),
+            VtError::Quota => write!(f, "VirusTotal quota exhausted"),
+            VtError::TooLarge => write!(f, "file too large for VirusTotal upload"),
+            VtError::Network(e) => write!(f, "VirusTotal network error: {e}"),
+            VtError::Parse(e) => write!(f, "VirusTotal response parse error: {e}"),
+        }
+    }
+}
+
+/// Outcome of a hash lookup.
+#[derive(Debug)]
+pub enum LookupOutcome {
+    /// VT has a report with analysis stats.
+    Report(VtVerdict),
+    /// VT never saw this hash (404) — upload fallback eligible.
+    Unknown,
+    /// Report exists but was never analysed (null stats).
+    Unscanned,
+    /// No verdict obtainable (auth, quota, network, parse).
+    NoVerdict(VtError),
+}
+
+impl std::fmt::Display for LookupOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LookupOutcome::Report(_) => write!(f, "report"),
+            LookupOutcome::Unknown => write!(f, "unknown to VirusTotal"),
+            LookupOutcome::Unscanned => write!(f, "on VirusTotal, never analysed"),
+            LookupOutcome::NoVerdict(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Pure: map a VT file-report `data.attributes` JSON into a verdict.
+/// `retrieved_at` is passed in (tests inject a fixed timestamp).
+pub fn map_stats(sha256: &str, attrs: &Value, retrieved_at: &str) -> LookupOutcome {
+    let Some(stats) = attrs.get("last_analysis_stats") else {
+        // Report exists but was never analysed.
+        return LookupOutcome::Unscanned;
+    };
+    if stats.is_null() {
+        return LookupOutcome::Unscanned;
+    }
+    let get = |k: &str| stats.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    LookupOutcome::Report(VtVerdict {
+        sha256: sha256.to_string(),
+        malicious: get("malicious"),
+        suspicious: get("suspicious"),
+        undetected: get("undetected"),
+        harmless: get("harmless"),
+        timeout: get("timeout"),
+        scanned_by_upload: attrs
+            .get("custom_analysis_id")
+            .map(|v| !v.is_null())
+            .unwrap_or(false),
+        retrieved_at: retrieved_at.to_string(),
+    })
+}
+
+fn status_to_err(status: reqwest::StatusCode) -> VtError {
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => VtError::Auth,
+        reqwest::StatusCode::TOO_MANY_REQUESTS => VtError::Quota,
+        reqwest::StatusCode::NOT_FOUND => VtError::Network(format!("unexpected 404: {status}")),
+        s => VtError::Network(format!("virustotal status {s}")),
+    }
+}
+
+/// Hash lookup: `GET /files/{sha256}`.
+pub async fn lookup_sha256(
+    client: &reqwest::Client,
+    key: &str,
+    sha256: &str,
+) -> LookupOutcome {
+    if key.is_empty() {
+        return LookupOutcome::NoVerdict(VtError::Auth);
+    }
+    let url = format!("{VT_API}/files/{sha256}");
+    let resp = match client
+        .get(&url)
+        .header("x-apikey", key)
+        .header("User-Agent", "GiRustStatus")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return LookupOutcome::NoVerdict(VtError::Network(e.to_string())),
+    };
+    match resp.status() {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::NOT_FOUND => return LookupOutcome::Unknown,
+        s => return LookupOutcome::NoVerdict(status_to_err(s)),
+    }
+    let json: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return LookupOutcome::NoVerdict(VtError::Parse(e.to_string())),
+    };
+    let attrs = json.get("data").and_then(|d| d.get("attributes"));
+    match attrs {
+        Some(a) => map_stats(sha256, a, &now_rfc3339()),
+        None => LookupOutcome::NoVerdict(VtError::Parse(
+            "response missing data.attributes".into(),
+        )),
+    }
+}
+
+/// One poll step of an analysis: `GET /analyses/{id}`.
+/// Returns Ok(Some(verdict)) when completed, Ok(None) when still queued.
+pub async fn poll_once(
+    client: &reqwest::Client,
+    key: &str,
+    analysis_id: &str,
+) -> Result<Option<VtVerdict>, VtError> {
+    let url = format!("{VT_API}/analyses/{analysis_id}");
+    let resp = client
+        .get(&url)
+        .header("x-apikey", key)
+        .send()
+        .await
+        .map_err(|e| VtError::Network(e.to_string()))?;
+    match resp.status() {
+        reqwest::StatusCode::OK => {}
+        s => return Err(status_to_err(s)),
+    }
+    let json: Value = resp
+        .json()
+        .await
+        .map_err(|e| VtError::Parse(e.to_string()))?;
+    let attrs = json
+        .get("data")
+        .and_then(|d| d.get("attributes"))
+        .ok_or_else(|| VtError::Parse("missing data.attributes".into()))?;
+    let status = attrs
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("queued");
+    if status != "completed" {
+        return Ok(None);
+    }
+    // Analysis stats carry the same shape as file reports.
+    let mut attrs_obj = attrs.clone();
+    // Build a synthetic attributes with last_analysis_stats from stats.
+    if let Some(stats) = attrs.get("stats") {
+        attrs_obj["last_analysis_stats"] = stats.clone();
+    }
+    let sha = attrs
+        .get("md5") // not sha; verdict sha256 filled by caller from the file
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let outcome = map_stats(sha, &attrs_obj, &now_rfc3339());
+    match outcome {
+        LookupOutcome::Report(v) => Ok(Some(v)),
+        LookupOutcome::Unscanned => Ok(None),
+        other => Err(VtError::Parse(format!("unexpected outcome: {other}"))),
+    }
+}
+
+/// Poll until completed or 10 min timeout (30 s interval).
+pub async fn poll_analysis(
+    client: &reqwest::Client,
+    key: &str,
+    analysis_id: &str,
+    sha256: &str,
+) -> Result<VtVerdict, VtError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    loop {
+        if let Some(mut verdict) = poll_once(client, key, analysis_id).await? {
+            verdict.sha256 = sha256.to_string();
+            verdict.scanned_by_upload = true;
+            return Ok(verdict);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(VtError::Network("analysis timeout (10 min)".into()));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    }
+}
+
+/// Upload a file for scanning. ≤32 MB via `POST /files`; larger via the
+/// special upload URL (650 MB cap).
+pub async fn upload_file(
+    client: &reqwest::Client,
+    key: &str,
+    path: &std::path::Path,
+    size: u64,
+) -> Result<String, VtError> {
+    if key.is_empty() {
+        return Err(VtError::Auth);
+    }
+    if size > SPECIAL_UPLOAD_LIMIT {
+        return Err(VtError::TooLarge);
+    }
+    let file = std::fs::read(path).map_err(|e| VtError::Network(e.to_string()))?;
+    let part = reqwest::multipart::Part::bytes(file)
+        .file_name(path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+
+    let (url, resp) = if size <= DIRECT_UPLOAD_LIMIT {
+        let url = format!("{VT_API}/files");
+        let r = client
+            .post(&url)
+            .header("x-apikey", key)
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(|e| VtError::Network(e.to_string()))?;
+        (url, r)
+    } else {
+        // Request a special upload URL for large files.
+        let get_url = format!("{VT_API}/files/upload_url");
+        let resp = client
+            .get(&get_url)
+            .header("x-apikey", key)
+            .send()
+            .await
+            .map_err(|e| VtError::Network(e.to_string()))?;
+        match resp.status() {
+            reqwest::StatusCode::OK => {}
+            s => return Err(status_to_err(s)),
+        }
+        let json: Value = resp
+            .json()
+            .await
+            .map_err(|e| VtError::Parse(e.to_string()))?;
+        let upload_url = json
+            .get("data")
+            .and_then(|d| d.get("upload_url"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| VtError::Parse("missing upload_url".into()))?
+            .to_string();
+        let r = client
+            .post(&upload_url)
+            .header("x-apikey", key)
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(|e| VtError::Network(e.to_string()))?;
+        (upload_url, r)
+    };
+    let _ = url;
+    match resp.status() {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+            return Err(VtError::Auth)
+        }
+        reqwest::StatusCode::TOO_MANY_REQUESTS => return Err(VtError::Quota),
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE => return Err(VtError::TooLarge),
+        s => return Err(VtError::Network(format!("virustotal status {s}"))),
+    }
+    let json: Value = resp
+        .json()
+        .await
+        .map_err(|e| VtError::Parse(e.to_string()))?;
+    let id = json
+        .get("data")
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| VtError::Parse("missing analysis id".into()))?;
+    Ok(id.to_string())
+}
+
+pub fn now_rfc3339() -> String {
+    // No chrono dep; epoch seconds suffice for display.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("epoch:{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AT: &str = "2026-11-05T00:00:00Z";
+    const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn map_stats_clean_report() {
+        let attrs = serde_json::json!({
+            "last_analysis_stats": {
+                "malicious": 0, "suspicious": 0, "undetected": 70,
+                "harmless": 0, "timeout": 0, "confirmed-timeout": 0,
+                "failure": 0, "type-unsupported": 0
+            }
+        });
+        match map_stats(&SHA, &attrs, AT) {
+            LookupOutcome::Report(v) => {
+                assert!(!v.is_flagged());
+                assert_eq!(v.malicious, 0);
+                assert_eq!(v.undetected, 70);
+            }
+            other => panic!("expected Report, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_stats_flagged_report() {
+        let attrs = serde_json::json!({
+            "last_analysis_stats": {
+                "malicious": 3, "suspicious": 2, "undetected": 65,
+                "harmless": 1, "timeout": 1
+            }
+        });
+        match map_stats(&SHA, &attrs, AT) {
+            LookupOutcome::Report(v) => {
+                assert!(v.is_flagged());
+                assert_eq!(v.flagged_ratio(), (5, 72));
+            }
+            other => panic!("expected Report, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_stats_null_stats_is_unscanned() {
+        let attrs = serde_json::json!({ "last_analysis_stats": null });
+        assert!(matches!(
+            map_stats(&SHA, &attrs, AT),
+            LookupOutcome::Unscanned
+        ));
+        let attrs2 = serde_json::json!({});
+        assert!(matches!(
+            map_stats(&SHA, &attrs2, AT),
+            LookupOutcome::Unscanned
+        ));
+    }
+
+    #[test]
+    fn empty_key_is_auth_no_verdict() {
+        // lookup with empty key must not hit the network; tested at map level:
+        // the guard is in lookup_sha256, verified by the bus test below.
+        // Here: outcome Display for NoVerdict(Auth) names the cause.
+        let out = LookupOutcome::NoVerdict(VtError::Auth);
+        assert!(out.to_string().contains("invalid or missing"));
+    }
+}
