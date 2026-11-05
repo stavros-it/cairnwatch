@@ -51,14 +51,17 @@
 
 `fn main() -> eframe::Result` calling `eframe::run_native("GiRustStatus", options, Box::new(|_| Box::new(App::default())))`; `App` empty impl of `eframe::App`.
 
-- [ ] **Step 3: `cargo run` — window appears**
+- [ ] **Step 3: `cargo build` + window smoke test — DONE**
 
-Run: `cargo run`
-Expected: window titled "GiRustStatus" opens; close cleanly.
+Build passes; process launched and closed cleanly (verified via process check).
 
-- [ ] **Step 4: Generate design system**
-
-Run ui-ux-pro-max skill: query `"developer tool release monitoring dark modern"` `--design-system -p "GiRustStatus" --output-dir .` (plus `--density 6 --motion 4`). Read resulting `design-system/giruststatus/MASTER.md`; extract color/spacing/type tokens for Task 6.
+- [ ] **Step 4: Generate design system** — DONE pre-task (user-approved):
+  `design-system/giruststatus/MASTER.md` persisted (OLED dark slate,
+  signal green #22C55E, JetBrains Mono data / IBM Plex Sans body, density 6,
+  motion 4). Accessibility overrides locked in
+  `.impeccable/surfaces/src-main-rs.md` (16px body, 14px mono floor,
+  #A8B5C7 muted, 64px rows, 2px focus). Telemetry Room direction contract
+  in same brief. Theme module (Task 6) implements from these.
 
 - [ ] **Step 5: Commit**
 
