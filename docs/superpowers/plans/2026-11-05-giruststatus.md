@@ -205,7 +205,8 @@ git commit -m "feat: core models, config, atomic state persistence"
 - Produces:
   - `theme::apply(ctx, choice)` — sets egui `Visuals` from MASTER.md tokens (dark-first, accent palette, spacing scale); `ThemeChoice { Dark, Light, System }`.
   - `App` top bar: app name, Refresh button (disabled while refresh in flight), search box, sort dropdown (`Name`, `Newest release`, `Last checked`), Settings gear.
-  - `list.rs`: rows = host glyph (GH/GL), `owner/name`, category ribbon color strip, release tag + date, NEW pill (`new_release`), status pill from `RepoStatus`, pin icon. Pinned sort first. Fuzzy search via `fuzzy-matcher` over name+owner+category.
+  - `list.rs`: rows = host glyph (GH/GL), `owner/name`, category ribbon color strip, release tag + date, NEW indicator, status pill from `RepoStatus`, pin icon. Pinned sort first. Fuzzy search via `fuzzy-matcher` over name+owner+category.
+  - NEW indicator (three layers, no info in color alone): (1) leading 2px strip + elevated row background in theme accent-green while `new_release`; (2) version pill `↓ <tag>` — filled green when NEW, muted gray once seen; (3) header chip `N new` while any NEW exists, click filters list to only-new repos. Colorblind-safe: pill text also changes (`NEW` prefix vs version only).
   - `detail.rs`: release notes as styled plain text (bold headings heuristic), asset table (name, size, VT badge or "—", Download button), open-in-browser link, per-repo settings: category, pin, prerelease toggle, tag regex field (validated on change, red on invalid), asset pattern field (globset, validated).
 - [ ] **Step 1: Unit tests** — sort comparator (pinned first, then chosen key); search filter matches name/owner/category, non-match excluded.
 - [ ] **Step 2: Run — FAIL then implement — PASS.**

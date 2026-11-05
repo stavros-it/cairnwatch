@@ -113,7 +113,12 @@ Table/list of tracked repos, one row per repo:
 - Latest release tag + published date.
 - "NEW" pill when the latest release is newer than the last one the user saw
   (seen state is per repo, cleared when the row is opened or marked seen).
-- Status pill: OK / no releases / error (last fetch failed) / rate-limited.
+  Visual: green accent treatment — leading 2px strip + elevated row
+  background in accent-green, and the version pill renders filled green
+  with a "NEW" text prefix while unseen (muted gray after). A header chip
+  `N new` summarizes and filters. No information lives in color alone.
+- Status pill: OK / no releases / no stable release yet / error (last fetch
+  failed) / rate-limited.
 - Pin state: pinned repos sort to the top of the list.
 
 Above the list: a search box (fuzzy-matches repo name, owner, category, tag)
