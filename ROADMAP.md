@@ -34,6 +34,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Task 12: Final review + verification pass
 - [x] Fix: config missing-file misclassified as corrupt (Windows os error 2 string-sniff) — typed LoadError
 - [x] Fix: repo removal undiscoverable — Remove button in detail view + right-click hint
+- [x] Fix: UI contrast/glitches — deep-green selection (was bright green under light text), visible hover, colored status pills, stranded "new" filter, pin marker, row hover, date-only
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files

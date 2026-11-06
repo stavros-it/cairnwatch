@@ -5,10 +5,18 @@ use egui::{Color32, Label, RichText, Sense, Ui};
 
 /// A small rounded pill. `filled` paints the color; else muted outline.
 pub fn pill(ui: &mut Ui, text: &str, color: Color32, filled: bool) {
+    // Outline pills keep their semantic color (was always MUTED, so
+    // OK/error/no-stable looked identical).
     let bg = if filled { color } else { Tokens::MUTED_BG };
-    let fg = if filled { Tokens::ON_ACCENT } else { Tokens::MUTED };
+    let fg = if filled { Tokens::ON_ACCENT } else { color };
+    let stroke = if filled {
+        egui::Stroke::NONE
+    } else {
+        egui::Stroke::new(1.0_f32, color.gamma_multiply(0.6))
+    };
     egui::Frame::none()
         .fill(bg)
+        .stroke(stroke)
         .rounding(999.0)
         .inner_margin(egui::Margin::symmetric(10.0, 4.0))
         .show(ui, |ui| {

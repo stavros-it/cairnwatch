@@ -18,6 +18,7 @@ impl Tokens {
     pub const CARD_NEW: Color32 = Color32::from_rgb(0x1D, 0x2A, 0x42); // green-tinted card
     pub const MUTED_BG: Color32 = Color32::from_rgb(0x27, 0x2F, 0x42); // #272F42
     pub const BORDER: Color32 = Color32::from_rgb(0x47, 0x56, 0x69); // #475569
+    #[allow(dead_code)]
     pub const PRIMARY: Color32 = Color32::from_rgb(0x1E, 0x29, 0x3B); // #1E293B
     pub const TEXT: Color32 = Color32::from_rgb(0xF8, 0xFA, 0xFC); // #F8FAFC
     /// Accessibility-raised muted text (MASTER's #94A3B8 is too dim at small sizes).
@@ -25,7 +26,11 @@ impl Tokens {
     pub const ACCENT: Color32 = Color32::from_rgb(0x22, 0xC5, 0x5E); // #22C55E signal green
     pub const ON_ACCENT: Color32 = Color32::from_rgb(0x0F, 0x17, 0x2A);
     pub const DESTRUCTIVE: Color32 = Color32::from_rgb(0xEF, 0x44, 0x44); // #EF4444
-    pub const AMBER: Color32 = Color32::from_rgb(0xFA, 0xCC, 0x15); // #FACC15 scanning/unverified
+    /// Hover fill: clearly lighter than CARD.
+    pub const HOVER: Color32 = Color32::from_rgb(0x33, 0x41, 0x55); // #334155
+    /// Selection fill: deep green, TEXT on it is ~10:1 contrast.
+    pub const SELECTED: Color32 = Color32::from_rgb(0x14, 0x53, 0x2D); // #14532D
+    pub const AMBER:Color32 = Color32::from_rgb(0xFA, 0xCC, 0x15); // #FACC15 scanning/unverified
 
     /// Category ribbon palette, 8 slots (Task 8 assigns by category).
     pub const RIBBONS: [Color32; 8] = [
@@ -59,12 +64,22 @@ pub fn apply(ctx: &Context, _choice: ThemeChoice) {
     visuals.widgets.inactive.bg_fill = Tokens::CARD;
     visuals.widgets.inactive.fg_stroke.color = Tokens::TEXT;
     visuals.widgets.inactive.bg_stroke.color = Tokens::BORDER;
-    visuals.widgets.hovered.bg_fill = Tokens::PRIMARY;
+    // Hover must be visibly distinct from CARD (PRIMARY was ~identical).
+    visuals.widgets.hovered.bg_fill = Tokens::HOVER;
+    visuals.widgets.hovered.weak_bg_fill = Tokens::HOVER;
     visuals.widgets.hovered.fg_stroke.color = Tokens::TEXT;
-    visuals.widgets.active.bg_fill = Tokens::ACCENT;
-    visuals.widgets.active.fg_stroke.color = Tokens::ON_ACCENT;
-    visuals.selection.bg_fill = Tokens::ACCENT;
-    visuals.selection.stroke.color = Tokens::ON_ACCENT;
+    visuals.widgets.hovered.bg_stroke.color = Tokens::MUTED;
+    visuals.widgets.active.bg_fill = Tokens::SELECTED;
+    visuals.widgets.active.weak_bg_fill = Tokens::SELECTED;
+    visuals.widgets.active.fg_stroke.color = Tokens::TEXT;
+    visuals.widgets.active.bg_stroke.color = Tokens::ACCENT;
+    // Selection: deep green fill + bright text. Bright-green fill behind
+    // light text (old) was unreadable in rail, combos and text selection.
+    visuals.selection.bg_fill = Tokens::SELECTED;
+    visuals.selection.stroke.color = Tokens::TEXT;
+    visuals.widgets.open.bg_fill = Tokens::HOVER;
+    visuals.widgets.open.weak_bg_fill = Tokens::HOVER;
+    visuals.widgets.open.fg_stroke.color = Tokens::TEXT;
     // 2px text cursor (user accessibility requirement).
     visuals.text_cursor.stroke.width = 2.0;
     ctx.set_visuals(visuals);

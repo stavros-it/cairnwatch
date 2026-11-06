@@ -493,14 +493,33 @@ impl App {
             }
             // N new chip.
             let new_count = self.state.repos.iter().filter(|r| r.new_release).count();
-            if new_count > 0 {
+            // Keep the chip visible while the filter is on, else a 0-new
+            // state hides the only toggle and strands an empty list.
+            if new_count > 0 || self.filter_new_only {
+                let text = if self.filter_new_only {
+                    format!("✓ {new_count} new · show all")
+                } else {
+                    format!("{new_count} new")
+                };
                 let chip = egui::Button::new(
-                    egui::RichText::new(format!("{new_count} new"))
+                    egui::RichText::new(text)
                         .size(ui::theme::Tokens::SMALL + 2.0)
-                        .color(ui::theme::Tokens::ACCENT),
+                        .color(if self.filter_new_only {
+                            ui::theme::Tokens::ON_ACCENT
+                        } else {
+                            ui::theme::Tokens::ACCENT
+                        }),
                 )
-                .fill(ui::theme::Tokens::CARD_NEW);
-                if ui.add(chip).clicked() {
+                .fill(if self.filter_new_only {
+                    ui::theme::Tokens::ACCENT
+                } else {
+                    ui::theme::Tokens::CARD_NEW
+                });
+                if ui
+                    .add(chip)
+                    .on_hover_text("Toggle: show only repos with new releases")
+                    .clicked()
+                {
                     self.filter_new_only = !self.filter_new_only;
                 }
             }
@@ -626,9 +645,15 @@ impl App {
                                 ui.add_space(8.0);
                                 // Name + owner (clickable → detail).
                                 ui.vertical(|ui| {
+                                    let name = if repo.pinned {
+                                        format!("📌 {}", repo.name)
+                                    } else {
+                                        repo.name.clone()
+                                    };
                                     ui.label(
-                                        egui::RichText::new(&repo.name)
+                                        egui::RichText::new(name)
                                             .size(ui::theme::Tokens::BODY)
+                                            .color(ui::theme::Tokens::TEXT)
                                             .strong(),
                                     );
                                     ui.label(
@@ -651,7 +676,10 @@ impl App {
                                         ui::widgets::status_pill(ui, &repo.status);
                                         ui::widgets::version_pill(ui, &rel.tag, is_new);
                                         ui.label(
-                                            egui::RichText::new(&rel.published_at)
+                                            // ISO date only; full timestamp is noise.
+                                            egui::RichText::new(
+                                                rel.published_at.get(..10).unwrap_or(&rel.published_at),
+                                            )
                                                 .size(ui::theme::Tokens::DATA)
                                                 .color(ui::theme::Tokens::MUTED),
                                         );
@@ -667,6 +695,14 @@ impl App {
                                 ui.allocate_rect(ui.min_rect(), egui::Sense::click());
                             if row_response.clicked() {
                                 clicked_repo = Some(repo.id.clone());
+                            }
+                            // Hover outline: rows gave no feedback before.
+                            if row_response.hovered() {
+                                ui.painter().rect_stroke(
+                                    row_response.rect.expand2(egui::vec2(16.0, 12.0)),
+                                    8.0,
+                                    egui::Stroke::new(1.5_f32, ui::theme::Tokens::MUTED),
+                                );
                             }
                             let row_hover = row_response.on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .on_hover_text("Click for details · right-click for pin, category, remove");
