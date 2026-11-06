@@ -127,6 +127,9 @@ struct App {
     /// Last Credential Manager failure (shown in Settings), None = healthy.
     secrets_error: Option<String>,
     secret_store: Box<dyn crate::core::secrets::SecretStore>,
+    /// Current scan stage text + start time (Scanning dialog).
+    scan_stage: String,
+    scan_started: Option<std::time::Instant>,
     /// Last re-scan verdict, shown in its own dialog (never the gate).
     rescan_result: Option<ui::gate::RescanSummary>,
     /// Debug-only screenshot driver (see `devshots.rs`).
@@ -210,6 +213,8 @@ impl App {
             gate_repo_id: String::new(),
             gate_temp_path: None,
             rescan_result: None,
+            scan_stage: String::new(),
+            scan_started: None,
             secrets_error,
             secret_store,
             #[cfg(debug_assertions)]
@@ -470,8 +475,10 @@ impl App {
                         self.add_pending = false;
                     }
                 },
-                Event::DownloadProgress { repo_id: _, asset_name: _, downloaded, total } => {
-                    if matches!(self.gate, GatePhase::Downloading { .. }) {
+                Event::DownloadProgress { repo_id, asset_name, downloaded, total } => {
+                    if matches!(self.gate, GatePhase::Downloading { .. })
+                        && self.is_gate_asset(&repo_id, &asset_name)
+                    {
                         self.gate = GatePhase::Downloading { downloaded, total };
                         // Keep the UI live during transfer.
                     }
@@ -506,7 +513,11 @@ impl App {
                     // If the user cancelled or another flow took the gate,
                     // discard this file — no delivery after cancel (review
                     // CRITICAL #2).
-                    if !matches!(self.gate, GatePhase::Downloading { .. } | GatePhase::Scanning) {
+                    // Also discard a late file from an EARLIER, cancelled
+                    // flow while a new download is in the gate.
+                    if !matches!(self.gate, GatePhase::Downloading { .. } | GatePhase::Scanning)
+                        || !self.is_gate_asset(&repo_id, &asset_name)
+                    {
                         ui::gate::discard(&path);
                         self.log("discarded stale download (gate moved on)");
                         continue;
@@ -547,13 +558,27 @@ impl App {
                     self.save_state();
                 }
                 Event::LogLine(line) => self.log(line),
-                Event::ScanStarted { repo_id: _, asset_name: _ } => {
-                    if matches!(self.gate, GatePhase::Downloading { .. }) {
+                Event::ScanStarted { repo_id, asset_name } => {
+                    if matches!(self.gate, GatePhase::Downloading { .. })
+                        && self.is_gate_asset(&repo_id, &asset_name)
+                    {
                         self.gate = GatePhase::Scanning;
+                        self.scan_started = Some(std::time::Instant::now());
+                        self.scan_stage.clear();
                     }
                 }
-                Event::DownloadFailed { repo_id: _, reason } => {
-                    self.gate = GatePhase::Failed(reason);
+                Event::ScanStage { repo_id, asset_name, stage } => {
+                    if self.is_gate_asset(&repo_id, &asset_name) {
+                        self.scan_stage = stage;
+                    }
+                }
+                Event::DownloadFailed { repo_id, reason } => {
+                    // Only the gate's own download may fail it.
+                    if matches!(self.gate, GatePhase::Downloading { .. } | GatePhase::Scanning)
+                        && self.gate_repo_id == repo_id
+                    {
+                        self.gate = GatePhase::Failed(reason);
+                    }
                 }
                 Event::RateLimitsUpdated(rl) => {
                     self.live_rate_limits = rl;
@@ -1101,6 +1126,11 @@ impl App {
         }
     }
 
+    /// Does a bus event belong to the download currently in the gate?
+    fn is_gate_asset(&self, repo_id: &str, asset_name: &str) -> bool {
+        self.gate_repo_id == repo_id && self.gate_asset_name == asset_name
+    }
+
     /// Enter the VT gate for one asset (Download button and devshots).
     fn start_download(&mut self, repo_id: &str, asset: crate::core::models::Asset) {
         if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
@@ -1369,8 +1399,33 @@ impl App {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label(format!("Scanning {asset_name} on VirusTotal…"));
-                        ui.add(egui::Spinner::new());
+                        ui.label(egui::RichText::new(&asset_name).strong());
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label(if self.scan_stage.is_empty() {
+                                "Scanning on VirusTotal…"
+                            } else {
+                                self.scan_stage.as_str()
+                            });
+                        });
+                        if let Some(t0) = self.scan_started {
+                            let s = t0.elapsed().as_secs();
+                            ui.label(
+                                egui::RichText::new(format!("Elapsed {}:{:02}", s / 60, s % 60))
+                                    .size(ui::theme::Tokens::SMALL + 1.0)
+                                    .color(ui::theme::Tokens::MUTED),
+                            );
+                        }
+                        ui.add_space(8.0);
+                        // An upload analysis can take minutes; the modal
+                        // must never trap the user without a way out.
+                        if ui.button("Cancel").clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                        {
+                            self.send(Command::CancelDownload);
+                            self.gate = GatePhase::Cancelled;
+                            self.log("scan cancelled by user");
+                        }
                     });
                 ctx.request_repaint_after(std::time::Duration::from_millis(500));
             }

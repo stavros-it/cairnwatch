@@ -199,6 +199,24 @@ impl crate::App {
                             });
                         }
                         "refresh" => self.start_refresh(),
+                        // Real gate pipeline on an arbitrary URL (e.g. a
+                        // local test server): `downloadurl <name> <url>`.
+                        "downloadurl" => {
+                            if let Some((name, url)) = arg.split_once(' ') {
+                                let repo_id = self
+                                    .state
+                                    .repos
+                                    .first()
+                                    .map(|r| r.id.clone())
+                                    .unwrap_or_else(|| "devshots/local".into());
+                                let asset = crate::core::models::Asset {
+                                    name: name.to_string(),
+                                    size: 0,
+                                    url: url.to_string(),
+                                };
+                                self.start_download(&repo_id, asset);
+                            }
+                        }
                         "download" => {
                             let mut it = arg.split_whitespace().filter_map(|v| v.parse::<usize>().ok());
                             let (ri, ai) = (it.next().unwrap_or(0), it.next().unwrap_or(0));

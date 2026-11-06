@@ -105,6 +105,9 @@ UI conventions (learned from the visual pass):
 - VirusTotal returns no quota headers on `/files` (verified live), so the
   Rates VT rows show app-side counts (`observe_vt`) vs free tier 4/min,
   500/day.
+- Gate events are matched to the gate's repo+asset (`is_gate_asset`);
+  each download has its own cancel flag, checked between chunks, before
+  each VT step, inside the analysis poll, and before `FileReady`.
 
 Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
 fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.

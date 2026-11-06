@@ -38,6 +38,8 @@ pub enum Event {
     DownloadProgress { repo_id: String, asset_name: String, downloaded: u64, total: u64 },
     /// Download finished + hashed; VT scan starting.
     ScanStarted { repo_id: String, asset_name: String },
+    /// Human-readable scan stage (lookup / upload / waiting for analysis).
+    ScanStage { repo_id: String, asset_name: String, stage: String },
     /// Download itself failed (network error).
     DownloadFailed { repo_id: String, reason: String },
     /// Verdict (or no-verdict reason) ready for a Re-scan.
@@ -185,8 +187,29 @@ async fn run_download_flow(
         repo_id: repo_id.clone(),
         asset_name: asset.name.clone(),
     });
+    let stage = |s: &str| {
+        let _ = event_tx.send(Event::ScanStage {
+            repo_id: repo_id.clone(),
+            asset_name: asset.name.clone(),
+            stage: s.to_string(),
+        });
+    };
+    // Cancelled while scanning: drop the temp file, never upload it.
+    let cancelled = |path: &std::path::Path| {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(path);
+            let _ = event_tx.send(Event::LogLine("scan cancelled, temp deleted".into()));
+            true
+        } else {
+            false
+        }
+    };
+    stage("Looking up the file hash on VirusTotal");
     if let Err(wait) = throttle.try_acquire(Instant::now()) {
         tokio::time::sleep(wait).await;
+    }
+    if cancelled(&path) {
+        return;
     }
     let mut outcome = vt::lookup_sha256(&client, &config.vt_api_key, &sha).await;
     // Upload fallback: 404 (Unknown) or never-analysed report (Unscanned)
@@ -196,16 +219,21 @@ async fn run_download_flow(
         vt::LookupOutcome::Unknown | vt::LookupOutcome::Unscanned
     );
     if fallback_eligible && config.vt_upload_fallback {
+        if cancelled(&path) {
+            return;
+        }
         let _ = event_tx.send(Event::LogLine(
             "no VT report — upload fallback engaging".to_string(),
         ));
+        stage("Unknown to VirusTotal: uploading for analysis");
         let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         match vt::upload_file(&client, &config.vt_api_key, &path, size).await {
             Ok(analysis_id) => {
                 let _ = event_tx.send(Event::LogLine(
                     format!("uploaded, analysis {analysis_id} — polling"),
                 ));
-                match vt::poll_analysis(&client, &config.vt_api_key, &analysis_id, &sha).await {
+                stage("Waiting for VirusTotal analysis (usually 1–5 min, max 10)");
+                match vt::poll_analysis(&client, &config.vt_api_key, &analysis_id, &sha, &cancel).await {
                     Ok(verdict) => {
                         // Uploaded-by-us verdicts have no engine-name
                         // results in the analysis payload (stats only).
@@ -220,6 +248,11 @@ async fn run_download_flow(
                 outcome = vt::LookupOutcome::NoVerdict(e);
             }
         }
+    }
+    // A cancelled flow never hands its file to the UI (a re-download of
+    // the same asset could otherwise accept this stale file).
+    if cancelled(&path) {
+        return;
     }
     let _ = event_tx.send(Event::FileReady {
         repo_id,
@@ -340,9 +373,11 @@ pub fn spawn(
                 .build()
                 .expect("reqwest client");
             let throttle = std::sync::Arc::new(Throttle::new());
-            // Shared cancel flag: UI Cancel button sets it; the download
-            // stream checks it between chunks.
-            let cancel_flag = Arc::new(AtomicBool::new(false));
+            // Cancel flag of the CURRENT download: UI Cancel sets it; the
+            // flow checks it between chunks and before each VT step. A new
+            // download gets a fresh flag (resetting a shared one could
+            // un-cancel a previous flow that hadn't noticed yet).
+            let mut cancel_flag = Arc::new(AtomicBool::new(false));
             let throttle_rescan = throttle.clone();
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
@@ -421,7 +456,7 @@ pub fn spawn(
                         // Spawn the whole download+scan flow so the bus loop
                         // stays free for other commands (spec: refresh during
                         // a scan must not queue behind it).
-                        cancel_flag.store(false, Ordering::Relaxed);
+                        cancel_flag = Arc::new(AtomicBool::new(false));
                         let event_tx_d = event_tx.clone();
                         let dl_client = client.clone();
                         let throttle_d = throttle.clone();

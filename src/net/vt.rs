@@ -223,15 +223,21 @@ pub async fn poll_once(
     }
 }
 
-/// Poll until completed or 10 min timeout (30 s interval).
+/// Poll until completed, cancelled, or 10 min timeout (30 s interval).
+/// `cancel` stops polling early so a cancelled scan doesn't keep spending
+/// VT quota for up to 10 minutes.
 pub async fn poll_analysis(
     client: &reqwest::Client,
     key: &str,
     analysis_id: &str,
     sha256: &str,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<VtVerdict, VtError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(VtError::Network("cancelled".into()));
+        }
         if let Some(mut verdict) = poll_once(client, key, analysis_id).await? {
             verdict.sha256 = sha256.to_string();
             verdict.scanned_by_upload = true;
@@ -240,7 +246,13 @@ pub async fn poll_analysis(
         if std::time::Instant::now() >= deadline {
             return Err(VtError::Network("analysis timeout (10 min)".into()));
         }
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        // Sleep in 1 s steps so a cancel is noticed promptly.
+        for _ in 0..30 {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(VtError::Network("cancelled".into()));
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     }
 }
 
