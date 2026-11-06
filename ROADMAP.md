@@ -41,6 +41,8 @@ Status: planned → in progress → done. Update after every task.
 - [x] E2E with real network + user's key: GitHub+GitLab add/refresh; no-key Not-scanned gate (cancel deletes temp, confirm delivers); VT hash lookup clean (0/68, 0/64, 0/67) → auto-delivered, SHA-256 = upstream; badges + key persist across restart. Fixed: Rates never updated (headers never parsed, snapshot overwritten); VT sends no quota headers → app-side request counts vs free tier; GitLab "0 B" sizes → "—"
 - [x] E2E upload fallback (random 64 KB files via local server): 404 → upload → poll → clean → delivered in 49 s. Fixed: Scanning dialog had no Cancel/stage/elapsed (up to 10 min locked behind the modal); cancel now stops VT polling within ~1 s and deletes temp; shared cancel flag reset by the next download could un-cancel a running flow (now per-download); late events from a cancelled flow could hit a newer download (events now matched to the gate's asset)
 
+- [x] Polish: exe version info (0.1.0, product/description), README (setup, keyring, move via encrypted export), fresh-folder start verified, GUI subsystem, icon embedded
+
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files
 - [ ] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
