@@ -38,6 +38,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Fix: visual pass (screenshots of every view) — themed buttons/checkbox/slider, panel padding, full-width rail nav, 44px uniform controls, tofu glyphs removed, asset grid, wrapped stats tiles, rates remaining+reset time, settings grid, masked tokens/passwords, Add dialog Enter/focus/pending, markdown cleanup; debug-only devshots driver
 - [x] Fix: gate/dialog verification — gate is truly modal (dim backdrop, click-through blocked, focus trapped), Cancel focused on open with 2px ring, Enter/Esc cancel; re-scan no longer hijacks the download gate (clean re-scan showed "Download failed", mid-download re-scan discarded the file) — own result dialog; category palette shows the derived color; ribbon for release-less repos; Done dialog "Open folder"
 - [x] Feat: secrets in Windows Credential Manager (keyring only, user decision) — VT key + GitHub/GitLab tokens out of config.toml, auto-migration of plaintext configs, encrypted export carries keys / plain export doesn't, import keeps stored keys; export salt/IV from OS CSPRNG
+- [~] E2E with real network: GitHub+GitLab add/refresh, real download, no-key Not-scanned gate (cancel deletes temp; confirm delivers, SHA-256 matches upstream), restart persistence — done. Fixed: Rates never updated (GitHub/GitLab headers never parsed; snapshot overwritten per response). VirusTotal leg pending user's key
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files

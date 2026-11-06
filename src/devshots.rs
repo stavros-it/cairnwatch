@@ -19,6 +19,13 @@
 //! - `category <index>` — open the category dialog for the Nth repo
 //! - `rescan clean|flagged|none` — show the re-scan result dialog
 //! - `glyphs` — write `<dir>/glyphs.txt` (font coverage probe)
+//! - `addurl <url>` — real Add-repo (network); `refresh` — real refresh
+//! - `download <repo index> <asset index>` — real download through the
+//!   VT gate (same path as the Download button)
+//! - `status` — append gate phase, repo statuses and key presence (never
+//!   values) to `<dir>/status.txt`
+//!
+//! Secrets: in-memory store unless `GIRUST_SHOTS_KEYRING=real`.
 //!
 //! Used to capture screenshots when the desktop cannot be screen-grabbed.
 
@@ -181,6 +188,69 @@ impl crate::App {
                                 .open(shots.dir.join("focus.txt"))
                             {
                                 let _ = f.write_all(info.as_bytes());
+                            }
+                        }
+                        "addurl" => {
+                            self.add_url = arg.to_string();
+                            self.add_pending = true;
+                            self.send(crate::net::bus::Command::AddRepo {
+                                url: arg.to_string(),
+                                config: self.config.clone(),
+                            });
+                        }
+                        "refresh" => self.start_refresh(),
+                        "download" => {
+                            let mut it = arg.split_whitespace().filter_map(|v| v.parse::<usize>().ok());
+                            let (ri, ai) = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+                            let target = self.state.repos.get(ri).and_then(|r| {
+                                r.latest
+                                    .as_ref()
+                                    .and_then(|l| l.assets.get(ai).cloned())
+                                    .map(|a| (r.id.clone(), a))
+                            });
+                            match target {
+                                Some((id, asset)) => self.start_download(&id, asset),
+                                None => self.log(format!("devshots: no asset {ri}/{ai}")),
+                            }
+                        }
+                        "status" => {
+                            let mut out = format!(
+                                "gate={:?}
+vt_key_set={} gh_token_set={}
+",
+                                self.gate,
+                                !self.config.vt_api_key.is_empty(),
+                                self.config.github_pat.is_some()
+                            );
+                            for (i, r) in self.state.repos.iter().enumerate() {
+                                out.push_str(&format!(
+                                    "repo[{i}] {} status={:?} tag={:?} assets={}
+",
+                                    r.id,
+                                    r.status,
+                                    r.latest.as_ref().map(|l| l.tag.clone()),
+                                    r.latest.as_ref().map(|l| l.assets.len()).unwrap_or(0)
+                                ));
+                                if let Some(l) = &r.latest {
+                                    for (ai, a) in l.assets.iter().enumerate() {
+                                        out.push_str(&format!("  asset[{ai}] {} ({} B)
+", a.name, a.size));
+                                    }
+                                }
+                            }
+                            for l in self.log_ring.iter().rev().take(8).collect::<Vec<_>>().into_iter().rev() {
+                                out.push_str(&format!("log: {l}
+"));
+                            }
+                            out.push_str("---
+");
+                            use std::io::Write;
+                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(shots.dir.join("status.txt"))
+                            {
+                                let _ = f.write_all(out.as_bytes());
                             }
                         }
                         "mouse" => shots.pointer(arg, None),

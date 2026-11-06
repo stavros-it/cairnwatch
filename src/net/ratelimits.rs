@@ -36,10 +36,36 @@ impl RateLimits {
                 _ => {}
             }
         }
-        // Record as the latest observed state (rates view reads this).
-        *latest().lock().unwrap() = rl.clone();
         rl
     }
+
+    /// Overlay the fields `other` actually carries. Each API only sends
+    /// its own headers, so replacing wholesale (the old behavior) let a
+    /// GitHub response erase GitLab/VT numbers and vice versa.
+    pub fn merge(&mut self, other: &RateLimits) {
+        fn set<T: Copy>(dst: &mut Option<T>, src: Option<T>) {
+            if src.is_some() {
+                *dst = src;
+            }
+        }
+        set(&mut self.github_remaining, other.github_remaining);
+        set(&mut self.github_reset_epoch, other.github_reset_epoch);
+        set(&mut self.gitlab_remaining, other.gitlab_remaining);
+        set(&mut self.gitlab_reset_epoch, other.gitlab_reset_epoch);
+        set(&mut self.vt_minute_limit, other.vt_minute_limit);
+        set(&mut self.vt_minute_used, other.vt_minute_used);
+        set(&mut self.vt_daily_limit, other.vt_daily_limit);
+        set(&mut self.vt_daily_used, other.vt_daily_used);
+    }
+}
+
+/// Record one API response's rate-limit headers into the process-wide
+/// snapshot. Called on every GitHub/GitLab/VirusTotal response — before
+/// this, nothing called it for GitHub/GitLab, so Rates always showed
+/// "no request yet".
+pub fn observe(headers: &reqwest::header::HeaderMap) {
+    let rl = RateLimits::from_headers(headers);
+    latest().lock().unwrap().merge(&rl);
 }
 
 /// Process-global latest observed limits, read by the bus after any fetch.
@@ -57,6 +83,26 @@ pub fn latest_snapshot() -> RateLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_keeps_fields_the_new_response_lacks() {
+        let mut acc = RateLimits {
+            gitlab_remaining: Some(1999),
+            vt_daily_used: Some(3),
+            ..Default::default()
+        };
+        let gh = RateLimits {
+            github_remaining: Some(57),
+            github_reset_epoch: Some(1_800_000_000),
+            ..Default::default()
+        };
+        acc.merge(&gh);
+        assert_eq!(acc.github_remaining, Some(57));
+        assert_eq!(acc.gitlab_remaining, Some(1999)); // not wiped
+        assert_eq!(acc.vt_daily_used, Some(3));
+        acc.merge(&RateLimits::default()); // header-less response
+        assert_eq!(acc.github_remaining, Some(57));
+    }
 
     fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
         let mut hm = reqwest::header::HeaderMap::new();

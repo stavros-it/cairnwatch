@@ -64,7 +64,10 @@ fn main() -> eframe::Result {
 /// in-memory store so test sessions never touch the user's real keys.
 fn make_secret_store() -> Box<dyn crate::core::secrets::SecretStore> {
     #[cfg(debug_assertions)]
-    if std::env::var_os("GIRUST_SHOTS").is_some() {
+    if std::env::var_os("GIRUST_SHOTS").is_some()
+        // Explicit opt-in for real end-to-end runs (reads the stored keys).
+        && std::env::var("GIRUST_SHOTS_KEYRING").as_deref() != Ok("real")
+    {
         return Box::new(crate::core::secrets::MemStore::default());
     }
     Box::new(crate::core::secrets::OsKeyring::default())
@@ -441,7 +444,9 @@ impl eframe::App for App {
 
 impl App {
     fn drain_events(&mut self) {
+        let mut any = false;
         while let Ok(event) = self.event_rx.try_recv() {
+            any = true;
             match event {
                 Event::RepoUpdated(repo) => {
                     self.log(format!("repo updated: {}", repo.display_name()));
@@ -560,6 +565,11 @@ impl App {
                 }
             }
         }
+        // Any bus activity may have seen new rate-limit headers (add, VT
+        // lookup, upload — not only refresh); read the merged snapshot.
+        if any {
+            self.live_rate_limits = crate::net::ratelimits::latest_snapshot();
+        }
     }
 
     fn save_state(&mut self) {
@@ -597,11 +607,7 @@ impl App {
                 ui::theme::Tokens::ACCENT
             });
             if ui.add_enabled(!busy, refresh_btn).clicked() {
-                self.refresh_in_flight.store(true, Ordering::Relaxed);
-                self.send(Command::RefreshAll {
-                    repos: self.state.repos.clone(),
-                    config: self.config.clone(),
-                });
+                self.start_refresh();
             }
             // N new chip.
             let new_count = self.state.repos.iter().filter(|r| r.new_release).count();
@@ -1091,21 +1097,38 @@ impl App {
             self.log("filters updated");
         }
         if let Some(asset) = actions.download {
-            if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
-                self.log("download blocked: another download is in the gate");
-                return;
-            }
-            self.gate = GatePhase::Downloading { downloaded: 0, total: asset.size };
-            self.gate_asset_name = asset.name.clone();
-            self.gate_repo_id = repo.id.clone();
-            self.state.stats.downloads_started += 1;
-            self.send(Command::DownloadAsset {
-                repo_id: repo.id.clone(),
-                asset,
-                config: self.config.clone(),
-            });
-            self.log(format!("download requested: {}", self.gate_asset_name));
+            self.start_download(&repo.id, asset);
         }
+    }
+
+    /// Enter the VT gate for one asset (Download button and devshots).
+    fn start_download(&mut self, repo_id: &str, asset: crate::core::models::Asset) {
+        if !matches!(self.gate, GatePhase::Idle | GatePhase::Done { .. } | GatePhase::Cancelled | GatePhase::Failed(_)) {
+            self.log("download blocked: another download is in the gate");
+            return;
+        }
+        self.gate = GatePhase::Downloading { downloaded: 0, total: asset.size };
+        self.gate_asset_name = asset.name.clone();
+        self.gate_repo_id = repo_id.to_string();
+        self.state.stats.downloads_started += 1;
+        self.send(Command::DownloadAsset {
+            repo_id: repo_id.to_string(),
+            asset,
+            config: self.config.clone(),
+        });
+        self.log(format!("download requested: {}", self.gate_asset_name));
+    }
+
+    /// Manual refresh of every repo (Refresh button and devshots).
+    fn start_refresh(&mut self) {
+        if self.refresh_in_flight.load(Ordering::Relaxed) {
+            return;
+        }
+        self.refresh_in_flight.store(true, Ordering::Relaxed);
+        self.send(Command::RefreshAll {
+            repos: self.state.repos.clone(),
+            config: self.config.clone(),
+        });
     }
 
     /// Informational re-scan verdict (never touches the download gate).

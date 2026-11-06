@@ -96,6 +96,12 @@ UI conventions (learned from the visual pass):
   buttons and default to Cancel. `widgets::focus_ring` for buttons with
   custom fill/stroke (egui's own focus stroke is hidden there).
 - Re-scan results never enter `GatePhase`; they use `rescan_result`.
+- Rate limits: every API response calls `net::ratelimits::observe`, which
+  *merges* into one process snapshot (each API sends only its own
+  headers); the UI re-reads it after any bus event.
+- E2E driver commands (real network): `addurl`, `refresh`,
+  `download R A`, `status`; `GIRUST_SHOTS_KEYRING=real` opts into the
+  real Credential Manager (default: in-memory).
 
 Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
 fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.

@@ -94,12 +94,6 @@ fn fetch_error_status(repo: &Repo, e: FetchError) -> Repo {
     r
 }
 
-/// Forward rate-limit headers from any response to the UI.
-fn report_limits(event_tx: &tokio::sync::mpsc::UnboundedSender<Event>, resp: &reqwest::Response) {
-    let rl = RateLimits::from_headers(resp.headers());
-    let _ = event_tx.send(Event::RateLimitsUpdated(rl));
-}
-
 fn gl_error_status(repo: &Repo, e: GlError) -> Repo {
     let mut r = repo.clone();
     r.status = match e {

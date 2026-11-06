@@ -92,7 +92,7 @@ pub async fn fetch_latest(
     if let Some(pat) = pat {
         req = req.header("Authorization", format!("Bearer {pat}"));
     }
-    let resp = req.send().await.map_err(|e| FetchError::Network(e.to_string()))?;
+    let resp = req.send().await.inspect(|r| crate::net::ratelimits::observe(r.headers())).map_err(|e| FetchError::Network(e.to_string()))?;
     match resp.status() {
         reqwest::StatusCode::OK => {}
         reqwest::StatusCode::NOT_FOUND => return Err(FetchError::NotFound),
@@ -125,7 +125,7 @@ pub async fn fetch_releases_list(
     if let Some(pat) = pat {
         req = req.header("Authorization", format!("Bearer {pat}"));
     }
-    let resp = req.send().await.map_err(|e| FetchError::Network(e.to_string()))?;
+    let resp = req.send().await.inspect(|r| crate::net::ratelimits::observe(r.headers())).map_err(|e| FetchError::Network(e.to_string()))?;
     match resp.status() {
         reqwest::StatusCode::OK => {}
         reqwest::StatusCode::NOT_FOUND => return Err(FetchError::NotFound),

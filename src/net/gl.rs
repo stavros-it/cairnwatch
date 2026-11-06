@@ -95,7 +95,7 @@ pub async fn resolve_project_id(
     if let Some(pat) = pat {
         req = req.header("PRIVATE-TOKEN", pat);
     }
-    let resp = req.send().await.map_err(|e| GlError::Network(e.to_string()))?;
+    let resp = req.send().await.inspect(|r| crate::net::ratelimits::observe(r.headers())).map_err(|e| GlError::Network(e.to_string()))?;
     match resp.status() {
         reqwest::StatusCode::OK => {}
         reqwest::StatusCode::NOT_FOUND => return Err(GlError::NotFound),
@@ -144,7 +144,7 @@ pub async fn fetch_latest(
     if let Some(pat) = pat {
         req = req.header("PRIVATE-TOKEN", pat);
     }
-    let resp = req.send().await.map_err(|e| GlError::Network(e.to_string()))?;
+    let resp = req.send().await.inspect(|r| crate::net::ratelimits::observe(r.headers())).map_err(|e| GlError::Network(e.to_string()))?;
     match resp.status() {
         reqwest::StatusCode::OK => {}
         reqwest::StatusCode::NOT_FOUND => return Err(GlError::NotFound),
