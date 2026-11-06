@@ -65,3 +65,38 @@ pub fn ribbon(ui: &mut Ui, color: Color32) {
 pub fn vt_badge(ui: &mut Ui, text: &str, color: Color32) {
     pill(ui, text, color, false);
 }
+
+/// Dim, click-swallowing backdrop under modal dialogs. Drawn on the
+/// `PanelResizeLine` order: above the panels, below `Middle` windows, so
+/// clicks on the backdrop never raise it over the dialog. egui 0.29 has
+/// no built-in modal; without this the list stayed clickable behind the
+/// safety gate.
+pub fn modal_backdrop(ctx: &egui::Context, id: &str) {
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new(("modal_backdrop", id)))
+        .order(egui::Order::PanelResizeLine)
+        .fixed_pos(screen.min)
+        .interactable(true)
+        .show(ctx, |ui| {
+            ui.painter()
+                .rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+            // Not focusable: Tab must not land on the backdrop.
+            ui.allocate_rect(
+                screen,
+                Sense { click: true, drag: true, focusable: false },
+            );
+        });
+}
+
+/// 2px light focus ring (accessibility requirement). Needed on buttons
+/// with a custom fill/stroke: egui draws focus via the `active` stroke,
+/// which a custom stroke overrides and an ACCENT fill hides.
+pub fn focus_ring(ui: &Ui, resp: &egui::Response) {
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            resp.rect.expand(3.0),
+            6.0,
+            egui::Stroke::new(2.0_f32, Tokens::TEXT),
+        );
+    }
+}

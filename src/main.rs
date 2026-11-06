@@ -111,6 +111,8 @@ struct App {
     /// Real temp path of the gated file (FileReady carries it; dialogs use
     /// it instead of reconstructing from the asset name — review fix).
     gate_temp_path: Option<std::path::PathBuf>,
+    /// Last re-scan verdict, shown in its own dialog (never the gate).
+    rescan_result: Option<ui::gate::RescanSummary>,
     /// Debug-only screenshot driver (see `devshots.rs`).
     #[cfg(debug_assertions)]
     dev_shots: Option<devshots::DevShots>,
@@ -171,6 +173,7 @@ impl App {
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
             gate_temp_path: None,
+            rescan_result: None,
             #[cfg(debug_assertions)]
             dev_shots: devshots::DevShots::from_env(),
         }
@@ -189,6 +192,18 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Debug-only: feed devshots' synthetic pointer/key events to egui.
+    #[cfg(debug_assertions)]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(shots) = self.dev_shots.as_mut() {
+            raw_input.events.extend(shots.take_injected());
+            // egui hides keyboard focus while the OS window is unfocused;
+            // Windows' foreground lock makes that random for a launched
+            // test process, so pin it for deterministic screenshots.
+            raw_input.focused = true;
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
         #[cfg(debug_assertions)]
@@ -399,29 +414,27 @@ impl App {
                         // Keep the UI live during transfer.
                     }
                 }
-                Event::VtVerdictReady { repo_id, asset_name, sha256, outcome } => {
-                    let (phase, cached) = ui::gate::phase_after_scan(
+                Event::VtVerdictReady { repo_id: _, asset_name, sha256, outcome } => {
+                    // Re-scan is informational only. It used to be pushed
+                    // into the download gate: a clean verdict became
+                    // `Clean { path: "" }` → "Download failed: temp file has
+                    // no name", a flagged one offered "Download anyway" for
+                    // a file that wasn't there, and a re-scan during a live
+                    // download clobbered that download's gate state.
+                    let (_, cached) = ui::gate::phase_after_scan(
                         &outcome,
                         &sha256,
-                        std::path::PathBuf::new(), // rescan has no temp file
+                        std::path::PathBuf::new(),
                     );
-                    if let Some(v) = cached {
+                    if let Some(v) = &cached {
                         self.state.vt_cache.insert(sha256.clone(), v.clone());
                         self.state.stats.vt_scans += 1;
                         if v.is_flagged() {
                             self.state.stats.vt_flagged_seen += 1;
                         }
+                        self.save_state();
                     }
-                    match phase {
-                        GatePhase::Clean { .. } | GatePhase::AwaitingConfirm(_) => {
-                            // Re-scan of a previously downloaded asset: show
-                            // the verdict as a banner-style gate phase.
-                            self.gate = phase;
-                            self.gate_asset_name = asset_name;
-                            self.gate_repo_id = repo_id;
-                        }
-                        _ => {}
-                    }
+                    self.rescan_result = Some(ui::gate::rescan_summary(&asset_name, &sha256, &outcome));
                 }
                 Event::FileReady { repo_id, asset_name, path, sha256, outcome } => {
                     // Record asset → sha for the detail-view VT badge.
@@ -736,6 +749,18 @@ impl App {
                                     });
                                 } else {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        // Category ribbon too (was only drawn
+                                        // for repos with a release).
+                                        let (r_rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(3.0, 44.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            r_rect,
+                                            1.5,
+                                            ui::list::ribbon_color(repo.category.as_deref()),
+                                        );
+                                        ui.add_space(8.0);
                                         ui::widgets::status_pill(ui, &repo.status);
                                     });
                                 }
@@ -823,13 +848,22 @@ impl App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.label("Category name (color is derived):");
-                    ui.add_sized(
-                        [320.0, 32.0],
+                    let field = ui.add_sized(
+                        [320.0, 44.0],
                         egui::TextEdit::singleline(&mut self.category_draft)
-                            .hint_text("e.g. tools, media, dev"),
+                            .hint_text("e.g. tools, media, dev")
+                            .vertical_align(egui::Align::Center),
                     );
+                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        self.category_dialog_for = None;
+                    }
                     ui.add_space(8.0);
-                    // Palette preview: 8 swatches.
+                    // Palette: ring marks the color this name maps to (the
+                    // swatches were decorative before, so the result was a
+                    // guess).
+                    let draft = self.category_draft.trim();
+                    let chosen = (!draft.is_empty()).then(|| ui::list::ribbon_color(Some(draft)));
                     ui.horizontal(|ui| {
                         for color in ui::theme::Tokens::RIBBONS {
                             let (rect, _) = ui.allocate_exact_size(
@@ -837,11 +871,27 @@ impl App {
                                 egui::Sense::hover(),
                             );
                             ui.painter().rect_filled(rect, 4.0, color);
+                            if chosen == Some(color) {
+                                ui.painter().rect_stroke(
+                                    rect.expand(3.0),
+                                    6.0,
+                                    egui::Stroke::new(2.0_f32, ui::theme::Tokens::TEXT),
+                                );
+                            }
                         }
                     });
+                    ui.label(
+                        egui::RichText::new(if chosen.is_some() {
+                            "Ring = this category's color"
+                        } else {
+                            "Empty name clears the category"
+                        })
+                        .size(ui::theme::Tokens::SMALL)
+                        .color(ui::theme::Tokens::MUTED),
+                    );
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
+                        if ui.button("Save").clicked() || enter {
                             let cat = self.category_draft.trim().to_string();
                             let log_line = if let Some(r) =
                                 self.state.repos.iter_mut().find(|r| r.id == repo_id)
@@ -1001,6 +1051,47 @@ impl App {
         }
     }
 
+    /// Informational re-scan verdict (never touches the download gate).
+    fn show_rescan_result(&mut self, ctx: &egui::Context) {
+        let Some(r) = self.rescan_result.clone() else {
+            return;
+        };
+        use ui::gate::Severity;
+        let color = match r.severity {
+            Severity::Clean => ui::theme::Tokens::ACCENT,
+            Severity::Flagged => ui::theme::Tokens::DESTRUCTIVE,
+            Severity::Unverified => ui::theme::Tokens::AMBER,
+        };
+        let mut open = true;
+        egui::Window::new("Re-scan result")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(&r.headline).color(color).strong());
+                ui.label(&r.asset_name);
+                if !r.detail.is_empty() {
+                    ui.label(egui::RichText::new(&r.detail).color(ui::theme::Tokens::MUTED));
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Close").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        self.rescan_result = None;
+                    }
+                    if !r.sha256.is_empty() && ui.button("Open VirusTotal report").clicked() {
+                        let _ = crate::ui::detail::open_browser(&format!(
+                            "https://www.virustotal.com/gui/file/{}",
+                            r.sha256
+                        ));
+                    }
+                });
+            });
+        if !open {
+            self.rescan_result = None;
+        }
+    }
+
     /// Import/export dialogs (Task 10).
     fn show_io_dialogs(&mut self, ctx: &egui::Context) {
         if self.export_password_dialog {
@@ -1142,6 +1233,11 @@ impl App {
     fn show_gate(&mut self, ctx: &egui::Context) {
         let phase = self.gate.clone();
         let asset_name = self.gate_asset_name.clone();
+        // Every visible gate phase is modal (spec: blocking dialog).
+        if !matches!(phase, GatePhase::Idle | GatePhase::Cancelled | GatePhase::Clean { .. }) {
+            ui::widgets::modal_backdrop(ctx, "gate");
+        }
+        self.show_rescan_result(ctx);
         match phase {
             GatePhase::Idle => {}
             GatePhase::Downloading { downloaded, total } => {
@@ -1188,9 +1284,11 @@ impl App {
                 ctx.request_repaint_after(std::time::Duration::from_millis(500));
             }
             GatePhase::AwaitingConfirm(kind) => {
-                // Cancel is the default-focused button (spec). egui has no
-                // focus-on-open API here; we render Cancel FIRST and larger,
-                // and it owns the Response marked as default.
+                // Cancel is the default (spec): rendered first, primary
+                // style, keyboard-focused whenever nothing else has focus
+                // (Enter/Space activate it; Tab still reaches "Download
+                // anyway"), and Esc also cancels.
+                let mut cancel_now = ctx.input(|i| i.key_pressed(egui::Key::Escape));
                 egui::Window::new(match &kind {
                     ui::gate::ConfirmKind::Flagged { .. } => "⚠ Flagged file",
                     ui::gate::ConfirmKind::Unverified { .. } => "Not scanned",
@@ -1199,6 +1297,8 @@ impl App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
+                    // Focus trap: ids allowed to hold focus in this dialog.
+                    let mut trap: Vec<egui::Id> = Vec::new();
                     match &kind {
                         ui::gate::ConfirmKind::Flagged { verdict, top_engines } => {
                             let (flagged, total) = verdict.flagged_ratio();
@@ -1212,13 +1312,19 @@ impl App {
                             );
                             ui.label(&asset_name);
                             ui.add_space(8.0);
-                            ui.label(format!("Flagged by: {}", top_engines.join(", ")));
+                            ui.label(if top_engines.is_empty() {
+                                "Engine names not reported".to_string()
+                            } else {
+                                format!("Flagged by: {}", top_engines.join(", "))
+                            });
                             ui.add_space(8.0);
                             let url = format!(
                                 "https://www.virustotal.com/gui/file/{}",
                                 verdict.sha256
                             );
-                            if ui.button("Open VirusTotal report").clicked() {
+                            let report = ui.button("Open VirusTotal report");
+                            trap.push(report.id);
+                            if report.clicked() {
                                 let _ = crate::ui::detail::open_browser(&url);
                             }
                         }
@@ -1243,16 +1349,36 @@ impl App {
                                 .color(ui::theme::Tokens::ON_ACCENT),
                         )
                         .fill(ui::theme::Tokens::ACCENT);
-                        if ui.add(cancel).clicked() {
-                            // Delete the temp file at its REAL path.
-                            if let Some(tmp) = self.gate_temp_path.clone() {
-                                ui::gate::discard(&tmp);
-                            }
-                            self.gate_temp_path = None;
-                            self.gate = GatePhase::Cancelled;
-                            self.log("gate: cancelled, temp deleted");
+                        let cancel_resp = ui.add(cancel);
+                        trap.push(cancel_resp.id);
+                        if cancel_resp.clicked() {
+                            cancel_now = true;
                         }
-                        if ui.button("Download anyway").clicked() {
+                        // Risky action: destructive-tinted, secondary.
+                        let anyway = egui::Button::new(
+                            egui::RichText::new("Download anyway")
+                                .color(ui::theme::Tokens::DESTRUCTIVE),
+                        )
+                        .stroke(egui::Stroke::new(1.0_f32, ui::theme::Tokens::DESTRUCTIVE))
+                        // Fixed fill: focus would otherwise paint it green
+                        // (active visuals) — red-on-green, reads as "safe".
+                        .fill(ui::theme::Tokens::CARD);
+                        let anyway_resp = (!cancel_now).then(|| ui.add(anyway));
+                        if let Some(r) = &anyway_resp {
+                            trap.push(r.id);
+                        }
+                        // Focus stays inside the dialog (Tab used to escape
+                        // to the search box behind the modal); anything
+                        // else snaps back to the default, Cancel.
+                        let focused = ctx.memory(|m| m.focused());
+                        if !focused.is_some_and(|f| trap.contains(&f)) {
+                            cancel_resp.request_focus();
+                        }
+                        ui::widgets::focus_ring(ui, &cancel_resp);
+                        if let Some(r) = &anyway_resp {
+                            ui::widgets::focus_ring(ui, r);
+                        }
+                        if anyway_resp.is_some_and(|r| r.clicked()) {
                             let tmp = self
                                 .gate_temp_path
                                 .clone()
@@ -1279,11 +1405,20 @@ impl App {
                     });
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new("Cancel is the default action")
+                        egui::RichText::new("Cancel is the default action (Enter / Esc)")
                             .size(ui::theme::Tokens::SMALL)
                             .color(ui::theme::Tokens::MUTED),
                     );
                 });
+                if cancel_now && matches!(self.gate, GatePhase::AwaitingConfirm(_)) {
+                    // Delete the temp file at its REAL path.
+                    if let Some(tmp) = self.gate_temp_path.clone() {
+                        ui::gate::discard(&tmp);
+                    }
+                    self.gate_temp_path = None;
+                    self.gate = GatePhase::Cancelled;
+                    self.log("gate: cancelled, temp deleted");
+                }
             }
             GatePhase::Clean { path, sha256 } => {
                 // Should not linger — delivery happens in drain_events.
@@ -1312,9 +1447,20 @@ impl App {
                                     .color(ui::theme::Tokens::MUTED),
                             );
                         }
-                        if ui.button("Close").clicked() {
-                            self.gate = GatePhase::Idle;
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            {
+                                self.gate = GatePhase::Idle;
+                            }
+                            if ui.button("Open folder").clicked() {
+                                let dir = path
+                                    .parent()
+                                    .map(|p| p.to_path_buf())
+                                    .unwrap_or_else(|| self.config.download_dir.clone());
+                                let _ = crate::ui::detail::open_browser(&dir.to_string_lossy());
+                            }
+                        });
                     });
             }
             GatePhase::Cancelled => {
@@ -1329,7 +1475,9 @@ impl App {
                         ui.label(
                             egui::RichText::new(&e).color(ui::theme::Tokens::DESTRUCTIVE),
                         );
-                        if ui.button("Close").clicked() {
+                        if ui.button("Close").clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                        {
                             self.gate = GatePhase::Idle;
                         }
                     });

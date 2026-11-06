@@ -88,7 +88,8 @@ pub fn apply(ctx: &Context, _choice: ThemeChoice) {
     visuals.widgets.active.bg_fill = Tokens::SELECTED;
     visuals.widgets.active.weak_bg_fill = Tokens::SELECTED;
     visuals.widgets.active.fg_stroke.color = Tokens::TEXT;
-    visuals.widgets.active.bg_stroke.color = Tokens::ACCENT;
+    // `active` also styles keyboard focus: 2px light ring (accessibility).
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0_f32, Tokens::TEXT);
     // Selection: deep green fill + bright text. Bright-green fill behind
     // light text (old) was unreadable in rail, combos and text selection.
     visuals.selection.bg_fill = Tokens::SELECTED;

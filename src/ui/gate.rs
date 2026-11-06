@@ -100,6 +100,65 @@ pub fn phase_after_scan(
     }
 }
 
+/// Outcome of a re-scan, for the informational re-scan dialog.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RescanSummary {
+    pub asset_name: String,
+    pub sha256: String,
+    pub headline: String,
+    pub detail: String,
+    pub severity: Severity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Clean,
+    Flagged,
+    Unverified,
+}
+
+/// Turn a re-scan lookup outcome into dialog text. Pure — unit-tested.
+pub fn rescan_summary(
+    asset_name: &str,
+    sha: &str,
+    outcome: &crate::net::vt::LookupOutcome,
+) -> RescanSummary {
+    use crate::net::vt::LookupOutcome as LO;
+    let (headline, detail, severity) = match outcome {
+        LO::Report(v, engines) => {
+            let (flagged, total) = v.flagged_ratio();
+            if v.is_flagged() {
+                let by = if engines.is_empty() {
+                    "engine names not reported".to_string()
+                } else {
+                    format!("Flagged by: {}", engines.join(", "))
+                };
+                (format!("{flagged}/{total} engines flagged this file"), by, Severity::Flagged)
+            } else {
+                (format!("Clean: 0/{total} engines flagged this file"), String::new(), Severity::Clean)
+            }
+        }
+        LO::Unknown => (
+            "No verdict".into(),
+            "file is unknown to VirusTotal".into(),
+            Severity::Unverified,
+        ),
+        LO::Unscanned => (
+            "No verdict".into(),
+            "file is on VirusTotal but was never analysed".into(),
+            Severity::Unverified,
+        ),
+        LO::NoVerdict(e) => ("No verdict".into(), e.to_string(), Severity::Unverified),
+    };
+    RescanSummary {
+        asset_name: asset_name.to_string(),
+        sha256: sha.to_string(),
+        headline,
+        detail,
+        severity,
+    }
+}
+
 /// Confirm: move the temp file into `download_dir`, return the final path.
 pub fn deliver(temp: &Path, download_dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(download_dir).map_err(|e| format!("create download dir: {e}"))?;
@@ -134,6 +193,33 @@ mod tests {
             scanned_by_upload: false,
             retrieved_at: "epoch:0".into(),
         }
+    }
+
+    #[test]
+    fn rescan_summary_never_offers_delivery_and_reports_severity() {
+        let clean = rescan_summary("a.zip", "s", &LookupOutcome::Report(verdict(0, 0), vec![]));
+        assert_eq!(clean.severity, Severity::Clean);
+        assert!(clean.headline.contains("0/70"));
+
+        let bad = rescan_summary(
+            "a.zip",
+            "s",
+            &LookupOutcome::Report(verdict(2, 1), vec!["EngA".into(), "EngB".into()]),
+        );
+        assert_eq!(bad.severity, Severity::Flagged);
+        assert!(bad.headline.contains("3/73"));
+        assert_eq!(bad.detail, "Flagged by: EngA, EngB");
+
+        // Empty engine list must not render a dangling "Flagged by: ".
+        let bad_no_names = rescan_summary("a.zip", "s", &LookupOutcome::Report(verdict(1, 0), vec![]));
+        assert_eq!(bad_no_names.detail, "engine names not reported");
+
+        let none = rescan_summary(
+            "a.zip",
+            "s",
+            &LookupOutcome::NoVerdict(crate::net::vt::VtError::Quota),
+        );
+        assert_eq!(none.severity, Severity::Unverified);
     }
 
     fn temp_file(dir: &Path, name: &str) -> PathBuf {

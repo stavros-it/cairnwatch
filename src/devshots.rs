@@ -12,8 +12,14 @@
 //! - `search <text>` (empty text clears)
 //! - `shot <name>` — save `<dir>/<name>.png` of the current frame
 //! - `quit`
+//! - `mouse X Y` / `click X Y` / `rclick X Y` — synthetic pointer input
+//!   (logical px), injected through `raw_input_hook`
+//! - `key esc|enter|tab`
+//! - `gate downloading|scanning|flagged|flagged-noengines|unverified|done|failed|idle`
+//! - `category <index>` — open the category dialog for the Nth repo
+//! - `rescan clean|flagged|none` — show the re-scan result dialog
+//! - `glyphs` — write `<dir>/glyphs.txt` (font coverage probe)
 //!
-//! Real mouse input (hover, clicks) is driven from outside via Win32.
 //! Used to capture screenshots when the desktop cannot be screen-grabbed.
 
 use std::path::PathBuf;
@@ -23,6 +29,66 @@ pub struct DevShots {
     /// Screenshot name waiting for the next `Event::Screenshot`.
     pending: Option<String>,
     last_poll: f64,
+    /// One entry per future frame: events injected by `raw_input_hook`
+    /// (press and release land on separate frames, like a real click).
+    inject: std::collections::VecDeque<Vec<egui::Event>>,
+}
+
+impl DevShots {
+    /// Next frame's synthetic events (called from `raw_input_hook`).
+    pub fn take_injected(&mut self) -> Vec<egui::Event> {
+        self.inject.pop_front().unwrap_or_default()
+    }
+
+    fn pointer(&mut self, arg: &str, button: Option<egui::PointerButton>) {
+        let mut it = arg.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
+        let (Some(x), Some(y)) = (it.next(), it.next()) else {
+            return;
+        };
+        let pos = egui::pos2(x, y);
+        self.inject.push_back(vec![egui::Event::PointerMoved(pos)]);
+        if let Some(button) = button {
+            let ev = |pressed| egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.inject.push_back(vec![ev(true)]);
+            self.inject.push_back(vec![ev(false)]);
+        }
+    }
+
+    fn key(&mut self, name: &str) {
+        let key = match name {
+            "esc" => egui::Key::Escape,
+            "enter" => egui::Key::Enter,
+            "tab" => egui::Key::Tab,
+            _ => return,
+        };
+        let ev = |pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.inject.push_back(vec![ev(true)]);
+        self.inject.push_back(vec![ev(false)]);
+    }
+}
+
+fn sample_verdict(mal: u32) -> crate::core::models::VtVerdict {
+    crate::core::models::VtVerdict {
+        sha256: "ab".repeat(32),
+        malicious: mal,
+        suspicious: 0,
+        undetected: 68,
+        harmless: 0,
+        timeout: 0,
+        scanned_by_upload: false,
+        retrieved_at: String::new(),
+    }
 }
 
 impl DevShots {
@@ -32,6 +98,7 @@ impl DevShots {
             dir: PathBuf::from(dir),
             pending: None,
             last_poll: 0.0,
+            inject: Default::default(),
         })
     }
 }
@@ -100,6 +167,74 @@ impl crate::App {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
                         }
                         "quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        // Keyboard-focus probe: viewport focus + focused id.
+                        "focusinfo" => {
+                            let info = format!(
+                                "window_focused={} focused_id={:?}\n",
+                                ctx.input(|i| i.focused),
+                                ctx.memory(|m| m.focused())
+                            );
+                            use std::io::Write;
+                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(shots.dir.join("focus.txt"))
+                            {
+                                let _ = f.write_all(info.as_bytes());
+                            }
+                        }
+                        "mouse" => shots.pointer(arg, None),
+                        "click" => shots.pointer(arg, Some(egui::PointerButton::Primary)),
+                        "rclick" => shots.pointer(arg, Some(egui::PointerButton::Secondary)),
+                        "key" => shots.key(arg),
+                        "gate" => {
+                            use crate::ui::gate::{ConfirmKind, GatePhase};
+                            self.gate_asset_name = "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip".into();
+                            // No temp file in demo phases: Cancel/confirm must
+                            // never touch real files from here.
+                            self.gate_temp_path = None;
+                            self.gate = match arg {
+                                "downloading" => GatePhase::Downloading { downloaded: 1_200_000, total: 2_345_678 },
+                                "scanning" => GatePhase::Scanning,
+                                "flagged" => GatePhase::AwaitingConfirm(ConfirmKind::Flagged {
+                                    verdict: sample_verdict(4),
+                                    top_engines: vec!["EngineA".into(), "EngineB".into(), "EngineC".into()],
+                                }),
+                                "flagged-noengines" => GatePhase::AwaitingConfirm(ConfirmKind::Flagged {
+                                    verdict: sample_verdict(1),
+                                    top_engines: vec![],
+                                }),
+                                "unverified" => GatePhase::AwaitingConfirm(ConfirmKind::Unverified {
+                                    reason: "VirusTotal API key missing or rejected".into(),
+                                }),
+                                "done" => GatePhase::Done {
+                                    path: "downloads/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip".into(),
+                                    sha256: "ab".repeat(32),
+                                },
+                                "failed" => GatePhase::Failed("network: connection reset".into()),
+                                _ => GatePhase::Idle,
+                            };
+                        }
+                        "category" => {
+                            let idx: usize = arg.parse().unwrap_or(0);
+                            if let Some(r) = self.state.repos.get(idx) {
+                                self.category_dialog_for = Some(r.id.clone());
+                                self.category_draft = r.category.clone().unwrap_or_default();
+                            }
+                        }
+                        "rescan" => {
+                            use crate::net::vt::{LookupOutcome as LO, VtError};
+                            let outcome = match arg {
+                                "flagged" => LO::Report(sample_verdict(3), vec!["EngineA".into()]),
+                                "none" => LO::NoVerdict(VtError::Quota),
+                                _ => LO::Report(sample_verdict(0), vec![]),
+                            };
+                            self.rescan_result = Some(crate::ui::gate::rescan_summary(
+                                "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip",
+                                &"ab".repeat(32),
+                                &outcome,
+                            ));
+                        }
                         // Which UI glyphs the bundled fonts can render.
                         "glyphs" => {
                             let probe = [

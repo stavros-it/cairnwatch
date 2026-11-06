@@ -80,6 +80,14 @@ UI conventions (learned from the visual pass):
   commands to `<dir>/cmd.txt` (`view …`, `select N`, `add`, `shot name`,
   `glyphs`, `quit`); it saves PNGs via egui's own screenshot. Needed
   because this machine's agent session can't screen-grab GL windows.
+  Also `mouse/click/rclick X Y`, `key esc|enter|tab` (injected via
+  `raw_input_hook`), `gate <phase>`, `rescan …`, `category N`,
+  `focusinfo`. Full list in the module doc.
+- Modals: `widgets::modal_backdrop` (egui 0.29 has no modal) on
+  `Order::PanelResizeLine`; safety dialogs also trap focus to their own
+  buttons and default to Cancel. `widgets::focus_ring` for buttons with
+  custom fill/stroke (egui's own focus stroke is hidden there).
+- Re-scan results never enter `GatePhase`; they use `rescan_result`.
 
 Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
 fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.
