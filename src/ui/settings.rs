@@ -13,7 +13,8 @@ pub struct SettingsAction {
 }
 
 /// Render settings editing `config` in place. Returns requested actions.
-pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
+/// `secrets_error`: last Credential Manager failure, shown under the keys.
+pub fn show(ui: &mut Ui, config: &mut Config, secrets_error: Option<&str>) -> SettingsAction {
     let mut action = SettingsAction::default();
     ui.heading(RichText::new("Settings").size(Tokens::BODY + 6.0));
     ui.add_space(12.0);
@@ -33,7 +34,7 @@ pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
                     ui.label("API key");
                     ui.add_sized(
                         [FIELD_W, 44.0],
-                        field(&mut config.vt_api_key, "from virustotal.com — stored in plaintext next to the exe", true),
+                        field(&mut config.vt_api_key, "from virustotal.com", true),
                     );
                     ui.end_row();
                     ui.label("");
@@ -58,6 +59,24 @@ pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
                     config.gitlab_pat = if gl.is_empty() { None } else { Some(gl) };
                     ui.end_row();
                 });
+            ui.add_space(4.0);
+            // Where the three keys live (user decision: keyring only).
+            match secrets_error {
+                None => ui.label(
+                    RichText::new(
+                        "Keys are stored in Windows Credential Manager, not in config.toml. They don't travel with the folder; use the encrypted export to move them.",
+                    )
+                    .size(Tokens::SMALL + 1.0)
+                    .color(Tokens::MUTED),
+                ),
+                Some(e) => ui.label(
+                    RichText::new(format!(
+                        "Credential Manager error: {e}. Keys work for this session but are NOT saved."
+                    ))
+                    .size(Tokens::SMALL + 1.0)
+                    .color(Tokens::DESTRUCTIVE),
+                ),
+            };
             ui.add_space(12.0);
 
             section(ui, "DOWNLOADS");
@@ -90,16 +109,16 @@ pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
 
             section(ui, "BACKUP (portable move)");
             ui.label(
-                RichText::new("Export writes one JSON file with everything (repos, seen state, VT cache, stats, settings). Encrypted export uses AES-256 + PBKDF2.")
+                RichText::new("Export writes one file with repos, seen state, VT cache, stats and settings. Only the encrypted export (AES-256 + PBKDF2) includes your API keys.")
                     .size(Tokens::SMALL + 1.0)
                     .color(Tokens::MUTED),
             );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("Export (plain JSON)").clicked() {
+                if ui.button("Export (plain JSON, no keys)").clicked() {
                     action.export_plain = true;
                 }
-                if ui.button("Export (encrypted…)").clicked() {
+                if ui.button("Export (encrypted, with keys…)").clicked() {
                     action.export_encrypted = true;
                 }
                 if ui.button("Import…").clicked() {

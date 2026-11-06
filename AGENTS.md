@@ -76,8 +76,9 @@ judgment calls. `high` = edge cases or safety. `max` = hardest module only.
 ## Project rules
 
 - **Portable above all**: no writes outside the app folder (except the
-  user-chosen download folder), no registry, no installer, no external
-  runtimes, config (`config.toml`, `repos.json`) next to the exe.
+  user-chosen download folder and secrets in Windows Credential Manager),
+  no registry, no installer, no external runtimes, config (`config.toml`,
+  `repos.json`) next to the exe. Never write secrets in plaintext.
 - **Manual refresh only**: never add background polling.
 - **Safety gate**: no asset reaches the download folder without a VT verdict
   or an explicit "unverified — proceed?" confirmation. Flagged files get a

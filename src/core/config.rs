@@ -11,16 +11,21 @@ pub enum ThemeChoice {
     Dark,
 }
 
-/// All settings. Plaintext secrets (VT key, PATs) are an accepted
-/// portability trade-off, decided by the user.
+/// All settings. Secrets (VT key, PATs) are runtime-only here: they are
+/// read for migration from old plaintext files but never written. They
+/// live in Windows Credential Manager (`core::secrets`, user decision
+/// 2026-11-06).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    #[serde(skip_serializing)]
     pub vt_api_key: String,
     /// Upload unknown files to VirusTotal for scanning (default on).
     pub vt_upload_fallback: bool,
     pub download_dir: PathBuf,
+    #[serde(skip_serializing)]
     pub github_pat: Option<String>,
+    #[serde(skip_serializing)]
     pub gitlab_pat: Option<String>,
     /// Parallel repo fetches during refresh.
     pub refresh_concurrency: u32,
@@ -74,7 +79,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_roundtrip_preserves_every_field() {
+    fn config_roundtrip_preserves_settings_but_drops_secrets() {
         let cfg = Config {
             vt_api_key: "vtkey-123".into(),
             vt_upload_fallback: false,
@@ -89,7 +94,14 @@ mod tests {
         let path = dir.join("config.toml");
         cfg.save(&path).unwrap();
         let back = Config::load(&path).unwrap();
-        assert_eq!(back, cfg);
+        // Secrets never reach the file (they live in the OS keyring).
+        let expected = Config {
+            vt_api_key: String::new(),
+            github_pat: None,
+            gitlab_pat: None,
+            ..cfg
+        };
+        assert_eq!(back, expected);
     }
 
     #[test]

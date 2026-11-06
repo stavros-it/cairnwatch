@@ -23,8 +23,8 @@ all Android-specific features, background polling, 30+ source types.
 - Rust + egui/eframe. No web tech. Single binary.
 - Fully portable: config (`config.toml`), state (`repos.json`), `tmp/`,
   `downloads/` all next to the exe. No registry, no installer, no writes
-  outside the app folder (except user-chosen download dir). eframe's own
-  persistence API is NOT used.
+  outside the app folder (except user-chosen download dir and the secrets
+  below). eframe's own persistence API is NOT used.
 - Manual refresh only — no background polling, no notifications/toasts.
 - Sources: GitHub + GitLab (incl. self-hosted GitLab). Nothing else.
 - VT flow: download to temp → SHA-256 → hash lookup (`GET /v3/files/{sha}`)
@@ -35,7 +35,15 @@ all Android-specific features, background polling, 30+ source types.
   "unverified" + warn-and-confirm, never a silent pass or hard block.
 - Prerelease-only repos are trackable ("no stable release yet" status);
   per-repo filters: prerelease include, tag regex, asset name glob.
-- VT key and PATs in plaintext config — accepted trade-off for portability.
+- Secrets (VT key, GitHub/GitLab tokens) in Windows Credential Manager (user decision 2026-11-06),
+  "keyring only": never in `config.toml` (`Config` skips them on
+  serialize), never in the plain export; the encrypted export carries them.
+  `core::secrets` migrates old plaintext configs at start (rewrite only if
+  all moved), syncs on Settings edits, and an import without keys keeps
+  the stored ones. Supersedes the earlier "plaintext for portability"
+  decision. Debug devshots runs use an in-memory store, never the real one.
+- Export salt/IV come from the OS CSPRNG (`getrandom`); the old time+pid
+  hash was predictable.
 - Anonymous GitHub by default (60 req/hr), optional PAT.
 - App icon: exe resource (`winresource`) + egui window icon; art: dark slate
   rounded square, radar-sweep arc, shield cutout, green accent.

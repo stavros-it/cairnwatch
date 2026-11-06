@@ -60,6 +60,16 @@ fn main() -> eframe::Result {
 
 /// Load the embedded window icon (include_bytes keeps the exe portable —
 /// no asset file needed next to the exe).
+/// Windows Credential Manager, except debug devshots runs, which get an
+/// in-memory store so test sessions never touch the user's real keys.
+fn make_secret_store() -> Box<dyn crate::core::secrets::SecretStore> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("GIRUST_SHOTS").is_some() {
+        return Box::new(crate::core::secrets::MemStore::default());
+    }
+    Box::new(crate::core::secrets::OsKeyring::default())
+}
+
 fn load_icon() -> egui::IconData {
     let png = include_bytes!("../assets/icon.png");
     let img = image::load_from_memory(png).expect("icon png").to_rgba8();
@@ -111,6 +121,9 @@ struct App {
     /// Real temp path of the gated file (FileReady carries it; dialogs use
     /// it instead of reconstructing from the asset name — review fix).
     gate_temp_path: Option<std::path::PathBuf>,
+    /// Last Credential Manager failure (shown in Settings), None = healthy.
+    secrets_error: Option<String>,
+    secret_store: Box<dyn crate::core::secrets::SecretStore>,
     /// Last re-scan verdict, shown in its own dialog (never the gate).
     rescan_result: Option<ui::gate::RescanSummary>,
     /// Debug-only screenshot driver (see `devshots.rs`).
@@ -139,11 +152,31 @@ impl App {
             Err(crate::core::config::LoadError::Missing) => (Config::default(), None),
             Err(crate::core::config::LoadError::Corrupt(e)) => (Config::default(), Some(e)),
         };
+        // Secrets come from Windows Credential Manager. Plaintext ones in
+        // an older config.toml are moved there, then the file is rewritten
+        // without them — but only if every move succeeded (else keep it).
+        let mut config = config;
+        let secret_store = make_secret_store();
+        let report = crate::core::secrets::load_into(&mut config, secret_store.as_ref());
+        let mut startup_log = Vec::new();
+        if report.should_rewrite_config() {
+            match config.save(&crate::core::paths::config_file()) {
+                Ok(()) => startup_log.push(format!(
+                    "moved {} from config.toml to Windows Credential Manager",
+                    report.migrated.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ")
+                )),
+                Err(e) => startup_log.push(format!("config rewrite after key migration failed: {e}")),
+            }
+        }
+        let secrets_error = (!report.errors.is_empty()).then(|| report.errors.join("; "));
+        if let Some(e) = &secrets_error {
+            startup_log.push(format!("credential store: {e}"));
+        }
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let refresh_in_flight = Arc::new(AtomicBool::new(false));
         net::bus::spawn(cmd_rx, event_tx);
-        Self {
+        let mut app = Self {
             state,
             config,
             state_error,
@@ -174,8 +207,25 @@ impl App {
             gate_repo_id: String::new(),
             gate_temp_path: None,
             rescan_result: None,
+            secrets_error,
+            secret_store,
             #[cfg(debug_assertions)]
             dev_shots: devshots::DevShots::from_env(),
+        };
+        for line in startup_log {
+            app.log(line);
+        }
+        app
+    }
+
+    /// Persist secrets that changed between `old` and the current config.
+    fn sync_secrets(&mut self, old: &Config) {
+        match crate::core::secrets::sync(old, &self.config, self.secret_store.as_ref()) {
+            Ok(()) => self.secrets_error = None,
+            Err(e) => {
+                self.log(format!("credential store: {e}"));
+                self.secrets_error = Some(e);
+            }
         }
     }
 
@@ -327,10 +377,17 @@ impl eframe::App for App {
                     }
                     View::Settings => {
                         let before = self.config.clone();
-                        let action = ui::settings::show(ui, &mut self.config);
+                        let action = ui::settings::show(
+                            ui,
+                            &mut self.config,
+                            self.secrets_error.as_deref(),
+                        );
                         // Persist config ONLY when it actually changed (not
                         // every frame — review fix).
                         if self.config != before {
+                            // Secrets → Credential Manager; the rest → config.toml
+                            // (which never contains secrets).
+                            self.sync_secrets(&before);
                             if let Err(e) =
                                 self.config.save(&crate::core::paths::config_file())
                             {
@@ -1103,6 +1160,13 @@ impl App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label("Set a password for the export file:");
+                    ui.label(
+                        egui::RichText::new(
+                            "Includes your VirusTotal key and GitHub/GitLab tokens.",
+                        )
+                        .size(ui::theme::Tokens::SMALL + 1.0)
+                        .color(ui::theme::Tokens::MUTED),
+                    );
                     ui.add_sized(
                         [320.0, 32.0],
                         egui::TextEdit::singleline(&mut self.export_password).password(true),
@@ -1179,9 +1243,13 @@ impl App {
                                     None
                                 };
                                 match crate::core::io::import(&bytes, pw) {
-                                    Ok((state, config)) => {
+                                    Ok((state, mut config)) => {
+                                        // A bundle without keys (plain export)
+                                        // must not wipe the stored ones.
+                                        crate::core::secrets::keep_missing(&mut config, &self.config);
+                                        let old = std::mem::replace(&mut self.config, config);
+                                        self.sync_secrets(&old);
                                         self.state = state;
-                                        self.config = config;
                                         self.save_state();
                                         let _ =
                                             self.config.save(&crate::core::paths::config_file());

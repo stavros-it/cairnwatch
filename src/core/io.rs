@@ -5,7 +5,6 @@ use crate::core::config::Config;
 use crate::core::state::AppState;
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use base64::Engine;
-use sha2::Digest;
 
 type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
@@ -31,7 +30,35 @@ impl std::fmt::Display for ImportError {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Bundle {
     state: AppState,
+    /// Serialized without secrets (`Config` skips them). Old exports that
+    /// still have them in here are read for backward compatibility.
     config: Config,
+    /// Secrets travel ONLY in encrypted exports (they are otherwise kept
+    /// in the OS keyring, never written in plaintext).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secrets: Option<BundleSecrets>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct BundleSecrets {
+    #[serde(default)]
+    vt_api_key: String,
+    #[serde(default)]
+    github_pat: Option<String>,
+    #[serde(default)]
+    gitlab_pat: Option<String>,
+}
+
+impl Bundle {
+    fn into_parts(self) -> (AppState, Config) {
+        let mut config = self.config;
+        if let Some(s) = self.secrets {
+            config.vt_api_key = s.vt_api_key;
+            config.github_pat = s.github_pat;
+            config.gitlab_pat = s.gitlab_pat;
+        }
+        (self.state, config)
+    }
 }
 
 fn b64() -> base64::engine::GeneralPurpose {
@@ -47,39 +74,26 @@ fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
     key
 }
 
+/// Salt/IV bytes from the OS CSPRNG (BCryptGenRandom on Windows). The old
+/// version hashed time + pid: predictable, so not fit for a CBC IV now
+/// that encrypted exports carry the API keys.
 fn random_bytes(n: usize) -> Vec<u8> {
-    // OS entropy via temp uuidish path is overkill; use std hash of time +
-    // process id is weak. Use getrandom-style via std::collections hash of
-    // two clocks. For crypto-grade entropy we salt AND iv; use the rand
-    // from user temp dir names is silly — pull entropy from
-    // Windows CryptGenRandom equivalent: std doesn't expose it. Simplest
-    // robust source: hash of current nanos + process id + a counter.
-    // NOTE: replaced with rand crate in Cargo.toml for proper entropy.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let mut seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    seed ^= (std::process::id() as u128) << 64;
-    let mut out = Vec::with_capacity(n);
-    let mut ctr = 0u128;
-    while out.len() < n {
-        let mut h = sha2::Sha256::new();
-        sha2::Digest::update(&mut h, seed.to_le_bytes());
-        sha2::Digest::update(&mut h, ctr.to_le_bytes());
-        out.extend_from_slice(&sha2::Digest::finalize(h));
-        ctr += 1;
-    }
-    out.truncate(n);
+    let mut out = vec![0u8; n];
+    getrandom::getrandom(&mut out).expect("OS random number generator unavailable");
     out
 }
 
-/// Export state+config. `password: None` → plain JSON; `Some(p)` →
-/// `GIRS1|<salt b64>|<iv b64>|<ciphertext b64>`.
+/// Export state+config. `password: None` → plain JSON **without secrets**;
+/// `Some(p)` → `GIRS1|<salt b64>|<iv b64>|<ciphertext b64>`, secrets included.
 pub fn export(state: &AppState, config: &Config, password: Option<&str>) -> Vec<u8> {
     let bundle = Bundle {
         state: state.clone(),
         config: config.clone(),
+        secrets: password.map(|_| BundleSecrets {
+            vt_api_key: config.vt_api_key.clone(),
+            github_pat: config.github_pat.clone(),
+            gitlab_pat: config.gitlab_pat.clone(),
+        }),
     };
     let json = serde_json::to_vec(&bundle).expect("serialize bundle");
     match password {
@@ -137,11 +151,11 @@ pub fn import(bytes: &[u8], password: Option<&str>) -> Result<(AppState, Config)
             .map_err(|_| ImportError::BadPassword)?;
         let bundle: Bundle = serde_json::from_slice(&json)
             .map_err(|e| ImportError::Corrupt(format!("payload: {e}")))?;
-        Ok((bundle.state, bundle.config))
+        Ok(bundle.into_parts())
     } else {
         let bundle: Bundle = serde_json::from_slice(bytes)
             .map_err(|e| ImportError::Corrupt(format!("plain json: {e}")))?;
-        Ok((bundle.state, bundle.config))
+        Ok(bundle.into_parts())
     }
 }
 
@@ -181,12 +195,30 @@ mod tests {
     }
 
     #[test]
-    fn plain_roundtrip() {
+    fn plain_roundtrip_carries_no_secrets() {
         let (s, c) = sample();
         let bytes = export(&s, &c, None);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(!text.contains("vt_api_key") && !text.contains("github_pat"), "{text}");
         let (s2, c2) = import(&bytes, None).unwrap();
         assert_eq!(s2, s);
-        assert_eq!(c2, c);
+        assert_eq!(c2.vt_api_key, "");
+        assert_eq!(c2.github_pat, None);
+        assert_eq!(c2.refresh_concurrency, c.refresh_concurrency);
+    }
+
+    #[test]
+    fn old_plain_export_with_secrets_in_config_still_imports_them() {
+        let json = r#"{"state":{"repos":[]},"config":{"vt_api_key":"legacy","github_pat":"g"}}"#;
+        let (_, c) = import(json.as_bytes(), None).unwrap();
+        assert_eq!(c.vt_api_key, "legacy");
+        assert_eq!(c.github_pat.as_deref(), Some("g"));
+    }
+
+    #[test]
+    fn random_bytes_differ_between_calls() {
+        assert_ne!(random_bytes(16), random_bytes(16));
+        assert_eq!(random_bytes(16).len(), 16);
     }
 
     #[test]

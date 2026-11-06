@@ -29,7 +29,9 @@ installation, no Android integration, no Shizuku, no store scraping.
    the file, block with a warning dialog that requires explicit confirmation
    before the file is delivered.
 5. Fully portable: single folder, no installer, no registry, config stored
-   next to the exe.
+   next to the exe. One exception: secrets (VT key, GitHub/GitLab tokens)
+   live in Windows Credential Manager (user decision 2026-11-06); they move between PCs only via the
+   encrypted export.
 6. Nice GUI per the ui-ux-pro-max skill (design system section below).
 7. App icon embedded in the Windows exe and shown in the egui window.
 8. Organize and find repos: pinned repos, category ribbons, fuzzy search,
@@ -60,7 +62,9 @@ installation, no Android integration, no Shizuku, no store scraping.
 
 - Any telemetry, analytics, or network call beyond GitHub/GitLab APIs and
   VirusTotal APIs.
-- Storing credentials anywhere outside the portable folder.
+- Storing credentials in plaintext anywhere (config, plain export). They
+  live only in Windows Credential Manager and the encrypted export
+  (amended 2026-11-06; originally "outside the portable folder").
 - Silent downloads of anything. Every download is a user action.
 - Passing a flagged file without an explicit, informed confirmation.
 
@@ -204,8 +208,11 @@ prereleases (nightly-build repos). Add-time verification therefore:
 
 ### Settings
 
-- VirusTotal API key (plaintext in config file — accepted trade-off for
-  portability; the user owns this trade-off, decided in conversation).
+- VirusTotal API key, GitHub token, GitLab token: stored in Windows
+  Credential Manager (service `GiRustStatus`), never in `config.toml`.
+  Older plaintext configs are migrated on first start (file rewritten only
+  if every key moved). Plain export carries no keys; encrypted export does.
+  (Amended 2026-11-06; was plaintext in config, user decision.)
 - Upload-fallback toggle (default on).
 - Download folder (default `./downloads/` next to the exe).
 - GitHub PAT, GitLab PAT (optional).
@@ -275,8 +282,9 @@ pre-build unknown.
   must be plain `eframe::run_native` with a central theme module; no web
   tech.
 - Single binary, fully portable: no writes outside the portable folder (except
-  the user-chosen download folder), no registry, no installer, no external
-  runtime dependencies.
+  the user-chosen download folder and the three secrets in Windows
+  Credential Manager), no registry, no installer, no external runtime
+  dependencies.
 - Manual refresh only. No background threads polling anything.
 - VirusTotal public-tier quotas: 4 req/min, 500/day. The app throttles its VT
   requests and shows quota state (headers `x-quota_*`) in Settings.

@@ -38,6 +38,11 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 pbkdf2 = { version = "0.12", features = ["simple"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Secrets (VT key, GitHub/GitLab tokens) live in Windows Credential Manager,
+# never in config.toml (user decision 2026-11-06). Native backend, no TLS.
+keyring = { version = "3", features = ["windows-native"] }
+# OS CSPRNG for export salt/IV (BCryptGenRandom on Windows).
+getrandom = "0.2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "fs", "io-util"] }
 futures = "0.3"
 
