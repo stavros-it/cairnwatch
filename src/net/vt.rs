@@ -148,7 +148,7 @@ pub async fn lookup_sha256(
         .header("User-Agent", "GiRustStatus")
         .send()
         .await
-        .inspect(|r| crate::net::ratelimits::observe(r.headers()))
+        .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))
     {
         Ok(r) => r,
         Err(e) => return LookupOutcome::NoVerdict(VtError::Network(e.to_string())),
@@ -184,7 +184,7 @@ pub async fn poll_once(
         .header("x-apikey", key)
         .send()
         .await
-        .inspect(|r| crate::net::ratelimits::observe(r.headers()))
+        .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))
         .map_err(|e| VtError::Network(e.to_string()))?;
     match resp.status() {
         reqwest::StatusCode::OK => {}
@@ -270,7 +270,7 @@ pub async fn upload_file(
             .multipart(reqwest::multipart::Form::new().part("file", part))
             .send()
             .await
-            .inspect(|r| crate::net::ratelimits::observe(r.headers()))
+            .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))
             .map_err(|e| VtError::Network(e.to_string()))?;
         (url, r)
     } else {
@@ -281,7 +281,7 @@ pub async fn upload_file(
             .header("x-apikey", key)
             .send()
             .await
-            .inspect(|r| crate::net::ratelimits::observe(r.headers()))
+            .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))
             .map_err(|e| VtError::Network(e.to_string()))?;
         match resp.status() {
             reqwest::StatusCode::OK => {}
@@ -303,7 +303,7 @@ pub async fn upload_file(
             .multipart(reqwest::multipart::Form::new().part("file", part))
             .send()
             .await
-            .inspect(|r| crate::net::ratelimits::observe(r.headers()))
+            .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))
             .map_err(|e| VtError::Network(e.to_string()))?;
         (upload_url, r)
     };

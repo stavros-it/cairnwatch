@@ -102,6 +102,9 @@ UI conventions (learned from the visual pass):
 - E2E driver commands (real network): `addurl`, `refresh`,
   `download R A`, `status`; `GIRUST_SHOTS_KEYRING=real` opts into the
   real Credential Manager (default: in-memory).
+- VirusTotal returns no quota headers on `/files` (verified live), so the
+  Rates VT rows show app-side counts (`observe_vt`) vs free tier 4/min,
+  500/day.
 
 Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
 fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.

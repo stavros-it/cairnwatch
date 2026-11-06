@@ -233,7 +233,17 @@ vt_key_set={} gh_token_set={}
                                 ));
                                 if let Some(l) = &r.latest {
                                     for (ai, a) in l.assets.iter().enumerate() {
-                                        out.push_str(&format!("  asset[{ai}] {} ({} B)
+                                        let vt = self
+                                            .state
+                                            .asset_shas
+                                            .get(&format!("{}/{}", r.id, a.name))
+                                            .and_then(|sha| self.state.vt_cache.get(sha))
+                                            .map(|v| {
+                                                let (f, t) = v.flagged_ratio();
+                                                format!(" vt={f}/{t}")
+                                            })
+                                            .unwrap_or_default();
+                                        out.push_str(&format!("  asset[{ai}] {} ({} B){vt}
 ", a.name, a.size));
                                     }
                                 }
@@ -242,6 +252,13 @@ vt_key_set={} gh_token_set={}
                                 out.push_str(&format!("log: {l}
 "));
                             }
+                            out.push_str(&format!(
+                                "rates_ui={:?}
+rates_global={:?}
+",
+                                self.live_rate_limits,
+                                crate::net::ratelimits::latest_snapshot()
+                            ));
                             out.push_str("---
 ");
                             use std::io::Write;

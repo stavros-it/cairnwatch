@@ -250,11 +250,12 @@ fn asset_row(
             widgets::pill(ui, "match", Tokens::ACCENT, false);
         }
     });
-    ui.label(
-        RichText::new(format_bytes(asset.size))
-            .size(Tokens::DATA)
-            .color(Tokens::MUTED),
-    );
+    // GitLab release links carry no size (0) — show "—", not "0 B".
+    let size = if asset.size == 0 { "—".to_string() } else { format_bytes(asset.size) };
+    let size_label = ui.label(RichText::new(size).size(Tokens::DATA).color(Tokens::MUTED));
+    if asset.size == 0 {
+        size_label.on_hover_text("size not reported by the host");
+    }
     // VT badge from cache (review fix) or "not scanned".
     ui.horizontal(|ui| {
         if let Some(info) = vt_info(&asset.name) {

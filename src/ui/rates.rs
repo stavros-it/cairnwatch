@@ -40,6 +40,10 @@ fn quota_row(
     });
 }
 
+/// VirusTotal public (free) API limits.
+const VT_FREE_PER_MIN: u32 = 4;
+const VT_FREE_PER_DAY: u32 = 500;
+
 fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -113,8 +117,27 @@ pub fn show(ui: &mut Ui, rl: &RateLimits) {
             remaining_row(ui, "GitLab", rl.gitlab_remaining, rl.gitlab_reset_epoch, now);
             ui.add_space(8.0);
             ui.add_space(8.0);
-            quota_row(ui, "VirusTotal (minute)", rl.vt_minute_used, rl.vt_minute_limit, None);
-            quota_row(ui, "VirusTotal (daily)", rl.vt_daily_used, rl.vt_daily_limit, None);
+            // VirusTotal sends no quota headers on these endpoints, so
+            // fall back to the app's own count vs the free-tier limits.
+            let (min_used, min_limit) = match rl.vt_minute_used {
+                Some(u) => (Some(u), rl.vt_minute_limit),
+                None => (Some(rl.vt_requests_last_minute), Some(VT_FREE_PER_MIN)),
+            };
+            quota_row(ui, "VirusTotal (last minute)", min_used, min_limit, None);
+            let (day_used, day_limit) = match rl.vt_daily_used {
+                Some(u) => (Some(u), rl.vt_daily_limit),
+                None => (Some(rl.vt_requests_session), Some(VT_FREE_PER_DAY)),
+            };
+            quota_row(ui, "VirusTotal (this session)", day_used, day_limit, None);
+            if rl.vt_daily_used.is_none() {
+                ui.label(
+                    RichText::new(
+                        "VirusTotal reports no quota headers; counts are this app's own requests vs the free tier (4/min, 500/day).",
+                    )
+                    .size(Tokens::SMALL)
+                    .color(Tokens::MUTED),
+                );
+            }
         });
 }
 

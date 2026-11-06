@@ -17,6 +17,13 @@ pub struct RateLimits {
     pub vt_minute_used: Option<u32>,
     pub vt_daily_limit: Option<u32>,
     pub vt_daily_used: Option<u32>,
+    /// App-side VT request counts. VirusTotal sends no quota headers on
+    /// file/analysis responses (verified live), so these are the only
+    /// numbers the Rates view can show for VT.
+    #[serde(default)]
+    pub vt_requests_last_minute: u32,
+    #[serde(default)]
+    pub vt_requests_session: u32,
 }
 
 impl RateLimits {
@@ -75,14 +82,63 @@ fn latest() -> &'static std::sync::Mutex<RateLimits> {
     LATEST.get_or_init(|| std::sync::Mutex::new(RateLimits::default()))
 }
 
-/// Snapshot of the most recent rate-limit headers seen on any API response.
+/// VT response: merge any headers and count the request.
+pub fn observe_vt(headers: &reqwest::header::HeaderMap) {
+    observe(headers);
+    let mut log = vt_log().lock().unwrap();
+    log.push_back(std::time::Instant::now());
+    SESSION_VT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    prune(&mut log, std::time::Instant::now());
+}
+
+static SESSION_VT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static VT_LOG: std::sync::OnceLock<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>> =
+    std::sync::OnceLock::new();
+
+fn vt_log() -> &'static std::sync::Mutex<std::collections::VecDeque<std::time::Instant>> {
+    VT_LOG.get_or_init(Default::default)
+}
+
+/// Drop request instants older than 60 s. Pure on its inputs — tested.
+fn prune(log: &mut std::collections::VecDeque<std::time::Instant>, now: std::time::Instant) {
+    while log
+        .front()
+        .is_some_and(|t| now.duration_since(*t) >= std::time::Duration::from_secs(60))
+    {
+        log.pop_front();
+    }
+}
+
+/// Snapshot of the most recent rate-limit headers seen on any API
+/// response, plus the app-side VT request counts.
 pub fn latest_snapshot() -> RateLimits {
-    latest().lock().unwrap().clone()
+    let mut rl = latest().lock().unwrap().clone();
+    let mut log = vt_log().lock().unwrap();
+    prune(&mut log, std::time::Instant::now());
+    rl.vt_requests_last_minute = log.len() as u32;
+    rl.vt_requests_session = SESSION_VT.load(std::sync::atomic::Ordering::Relaxed);
+    rl
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_drops_only_entries_older_than_a_minute() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now() + Duration::from_secs(120);
+        let mut log: std::collections::VecDeque<Instant> = [
+            now - Duration::from_secs(90),
+            now - Duration::from_secs(60),
+            now - Duration::from_secs(59),
+            now,
+        ]
+        .into_iter()
+        .collect();
+        prune(&mut log, now);
+        assert_eq!(log.len(), 2);
+    }
 
     #[test]
     fn merge_keeps_fields_the_new_response_lacks() {
