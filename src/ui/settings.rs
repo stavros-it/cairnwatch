@@ -23,69 +23,72 @@ pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
         .rounding(8.0)
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            ui.label(RichText::new("VIRUSTOTAL").size(Tokens::SMALL).color(Tokens::MUTED));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("API key:");
-                ui.add_sized(
-                    [320.0, 32.0],
-                    egui::TextEdit::singleline(&mut config.vt_api_key)
-                        .hint_text("from virustotal.com (stored in plaintext next to the exe)"),
-                );
-            });
-            ui.checkbox(&mut config.vt_upload_fallback, "Upload unknown files to VirusTotal (hash lookup first)");
+            // One label/field grid so inputs line up (each row started at
+            // its label's width before, and hints were cut off at 240px).
+            section(ui, "VIRUSTOTAL");
+            egui::Grid::new("settings_vt")
+                .num_columns(2)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label("API key");
+                    ui.add_sized(
+                        [FIELD_W, 44.0],
+                        field(&mut config.vt_api_key, "from virustotal.com — stored in plaintext next to the exe", true),
+                    );
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut config.vt_upload_fallback, "Upload unknown files to VirusTotal (hash lookup first)");
+                    ui.end_row();
+                });
             ui.add_space(12.0);
 
-            ui.label(RichText::new("SOURCES").size(Tokens::SMALL).color(Tokens::MUTED));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("GitHub PAT:");
-                let mut gh = config.github_pat.clone().unwrap_or_default();
-                ui.add_sized(
-                    [240.0, 32.0],
-                    egui::TextEdit::singleline(&mut gh).hint_text("optional — raises 60/hr to 5000/hr"),
-                );
-                config.github_pat = if gh.is_empty() { None } else { Some(gh) };
-            });
-            ui.horizontal(|ui| {
-                ui.label("GitLab token:");
-                let mut gl = config.gitlab_pat.clone().unwrap_or_default();
-                ui.add_sized(
-                    [240.0, 32.0],
-                    egui::TextEdit::singleline(&mut gl).hint_text("optional"),
-                );
-                config.gitlab_pat = if gl.is_empty() { None } else { Some(gl) };
-            });
+            section(ui, "SOURCES");
+            egui::Grid::new("settings_src")
+                .num_columns(2)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label("GitHub token");
+                    let mut gh = config.github_pat.clone().unwrap_or_default();
+                    ui.add_sized([FIELD_W, 44.0], field(&mut gh, "optional — raises 60/hr to 5000/hr", true));
+                    config.github_pat = if gh.is_empty() { None } else { Some(gh) };
+                    ui.end_row();
+                    ui.label("GitLab token");
+                    let mut gl = config.gitlab_pat.clone().unwrap_or_default();
+                    ui.add_sized([FIELD_W, 44.0], field(&mut gl, "optional", true));
+                    config.gitlab_pat = if gl.is_empty() { None } else { Some(gl) };
+                    ui.end_row();
+                });
             ui.add_space(12.0);
 
-            ui.label(RichText::new("DOWNLOADS").size(Tokens::SMALL).color(Tokens::MUTED));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Folder:");
-                let mut dir = config.download_dir.to_string_lossy().into_owned();
-                ui.add_sized(
-                    [240.0, 32.0],
-                    egui::TextEdit::singleline(&mut dir).hint_text("./downloads"),
-                );
-                config.download_dir = dir.into();
-                if ui.button("Open folder").clicked() {
-                    let _ = crate::ui::detail::open_browser(&config.download_dir.to_string_lossy());
-                }
-            });
+            section(ui, "DOWNLOADS");
+            egui::Grid::new("settings_dl")
+                .num_columns(2)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label("Folder");
+                    ui.horizontal(|ui| {
+                        let mut dir = config.download_dir.to_string_lossy().into_owned();
+                        ui.add_sized([FIELD_W, 44.0], field(&mut dir, "./downloads", false))
+                            .on_hover_text(dir.clone());
+                        config.download_dir = dir.into();
+                        if ui.button("Open folder").clicked() {
+                            let _ = crate::ui::detail::open_browser(&config.download_dir.to_string_lossy());
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("Parallel fetches");
+                    let mut c = config.refresh_concurrency as i32;
+                    ui.scope(|ui| {
+                        // 44px interact height made the slider knob huge.
+                        ui.spacing_mut().interact_size.y = 28.0;
+                        ui.add(egui::Slider::new(&mut c, 1..=16).text("repos at once"));
+                    });
+                    config.refresh_concurrency = c.max(1) as u32;
+                    ui.end_row();
+                });
             ui.add_space(12.0);
 
-            ui.label(RichText::new("REFRESH").size(Tokens::SMALL).color(Tokens::MUTED));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Parallel repo fetches:");
-                let mut c = config.refresh_concurrency as i32;
-                ui.add(egui::Slider::new(&mut c, 1..=16));
-                config.refresh_concurrency = c.max(1) as u32;
-            });
-            ui.add_space(12.0);
-
-            ui.label(RichText::new("BACKUP (portable move)").size(Tokens::SMALL).color(Tokens::MUTED));
-            ui.add_space(4.0);
+            section(ui, "BACKUP (portable move)");
             ui.label(
                 RichText::new("Export writes one JSON file with everything (repos, seen state, VT cache, stats, settings). Encrypted export uses AES-256 + PBKDF2.")
                     .size(Tokens::SMALL + 1.0)
@@ -105,4 +108,21 @@ pub fn show(ui: &mut Ui, config: &mut Config) -> SettingsAction {
             });
         });
     action
+}
+
+const FIELD_W: f32 = 460.0;
+
+/// Settings text field; `secret` masks keys/tokens on screen.
+fn field<'a>(text: &'a mut String, hint: &str, secret: bool) -> egui::TextEdit<'a> {
+    egui::TextEdit::singleline(text)
+        .hint_text(hint.to_owned())
+        .password(secret)
+        .vertical_align(egui::Align::Center)
+        .desired_width(FIELD_W)
+}
+
+/// Small caps section label.
+fn section(ui: &mut Ui, title: &str) {
+    ui.label(RichText::new(title).size(Tokens::SMALL).color(Tokens::MUTED));
+    ui.add_space(4.0);
 }

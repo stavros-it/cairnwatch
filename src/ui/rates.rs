@@ -27,7 +27,7 @@ fn quota_row(
                 (format!("{u} / {l} used"), c)
             }
             (Some(u), None) => (format!("{u} used"), Tokens::TEXT),
-            (None, _) => ("—".into(), Tokens::MUTED),
+            (None, _) => ("— (no request yet)".into(), Tokens::MUTED),
         };
         ui.label(RichText::new(text).size(Tokens::DATA).color(color));
         if let Some(r) = reset_in {
@@ -36,6 +36,55 @@ fn quota_row(
                     .size(Tokens::SMALL + 2.0)
                     .color(Tokens::MUTED),
             );
+        }
+    });
+}
+
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// "in 12 min" / "in 1 h 5 min" / "now". Pure — unit-tested.
+pub fn reset_in(reset_epoch: u64, now: u64) -> String {
+    let secs = reset_epoch.saturating_sub(now);
+    if secs == 0 {
+        return "now".into();
+    }
+    let mins = secs.div_ceil(60);
+    if mins < 60 {
+        format!("in {mins} min")
+    } else {
+        format!("in {} h {} min", mins / 60, mins % 60)
+    }
+}
+
+fn remaining_row(ui: &mut Ui, name: &str, remaining: Option<u32>, reset: Option<u64>, now: u64) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(name).size(Tokens::DATA).strong());
+        match remaining {
+            None => {
+                ui.label(RichText::new("— (no request yet)").size(Tokens::DATA).color(Tokens::MUTED));
+            }
+            Some(r) => {
+                let color = if r == 0 {
+                    Tokens::DESTRUCTIVE
+                } else if r <= 10 {
+                    Tokens::AMBER
+                } else {
+                    Tokens::ACCENT
+                };
+                ui.label(RichText::new(format!("{r} remaining")).size(Tokens::DATA).color(color));
+                if let Some(e) = reset {
+                    ui.label(
+                        RichText::new(format!("resets {}", reset_in(e, now)))
+                            .size(Tokens::SMALL + 2.0)
+                            .color(Tokens::MUTED),
+                    );
+                }
+            }
         }
     });
 }
@@ -56,19 +105,13 @@ pub fn show(ui: &mut Ui, rl: &RateLimits) {
         .rounding(8.0)
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            quota_row(ui, "GitHub (hourly)", rl.github_remaining.map(|r| 60 - r.min(60)), Some(60), None);
-            // GitHub gives remaining + reset; show remaining directly.
-            ui.label(
-                RichText::new(format!(
-                    "remaining: {} · resets at epoch {}",
-                    rl.github_remaining.map(|r| r.to_string()).unwrap_or_else(|| "?".into()),
-                    rl.github_reset_epoch.map(|r| r.to_string()).unwrap_or_else(|| "?".into())
-                ))
-                .size(Tokens::SMALL + 2.0)
-                .color(Tokens::MUTED),
-            );
+            // GitHub/GitLab headers give *remaining* (limit is 60/hr
+            // anonymous, 5000/hr with a PAT — the old "used of 60" row was
+            // wrong with a PAT). Show remaining + a relative reset time.
+            let now = now_epoch();
+            remaining_row(ui, "GitHub (hourly)", rl.github_remaining, rl.github_reset_epoch, now);
+            remaining_row(ui, "GitLab", rl.gitlab_remaining, rl.gitlab_reset_epoch, now);
             ui.add_space(8.0);
-            quota_row(ui, "GitLab", rl.gitlab_remaining, None, None);
             ui.add_space(8.0);
             quota_row(ui, "VirusTotal (minute)", rl.vt_minute_used, rl.vt_minute_limit, None);
             quota_row(ui, "VirusTotal (daily)", rl.vt_daily_used, rl.vt_daily_limit, None);
@@ -87,17 +130,29 @@ pub fn show_stats(ui: &mut Ui, stats: &Stats, repo_count: usize, new_count: usiz
         ("VT scans".into(), stats.vt_scans.to_string(), Tokens::TEXT),
         ("Flagged files seen".into(), stats.vt_flagged_seen.to_string(), Tokens::DESTRUCTIVE),
     ];
-    for (label, value, color) in cards {
-        egui::Frame::none()
-            .fill(Tokens::CARD)
-            .rounding(8.0)
-            .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-            .show(ui, |ui| {
-                ui.label(RichText::new(&label).size(Tokens::SMALL + 2.0).color(Tokens::MUTED));
-                ui.label(RichText::new(&value).size(Tokens::BODY + 10.0).color(color).strong());
-            });
-        ui.add_space(8.0);
-    }
+    // Equal-width tiles in as many columns as fit (they stacked one per
+    // row before; horizontal_wrapped can't wrap Frames).
+    const TILE_W: f32 = 200.0;
+    let cols = ((ui.available_width() + 12.0) / (TILE_W + 32.0 + 12.0)).floor().max(1.0) as usize;
+    egui::Grid::new("stats_tiles").spacing([12.0, 12.0]).show(ui, |ui| {
+        for (i, (label, value, color)) in cards.into_iter().enumerate() {
+            if i > 0 && i % cols == 0 {
+                ui.end_row();
+            }
+            egui::Frame::none()
+                .fill(Tokens::CARD)
+                .rounding(8.0)
+                .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                .show(ui, |ui| {
+                    ui.set_width(TILE_W);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(&label).size(Tokens::SMALL + 2.0).color(Tokens::MUTED));
+                        ui.label(RichText::new(&value).size(Tokens::BODY + 10.0).color(color).strong());
+                    });
+                });
+        }
+    });
+    ui.add_space(8.0);
     ui.add_space(8.0);
     ui.label(
         RichText::new("Counters persist in repos.json.")
@@ -109,6 +164,15 @@ pub fn show_stats(ui: &mut Ui, stats: &Stats, repo_count: usize, new_count: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_in_formats_relative() {
+        assert_eq!(reset_in(100, 200), "now");
+        assert_eq!(reset_in(100, 100), "now");
+        assert_eq!(reset_in(130, 100), "in 1 min");
+        assert_eq!(reset_in(100 + 12 * 60, 100), "in 12 min");
+        assert_eq!(reset_in(100 + 65 * 60, 100), "in 1 h 5 min");
+    }
 
     #[test]
     fn quota_state_smoke() {

@@ -45,7 +45,7 @@ pub fn show(
                 crate::core::models::RepoHost::GitHub => "GitHub",
                 crate::core::models::RepoHost::GitLab { host } => host,
             };
-            widgets::pill(ui, host_label, Tokens::MUTED_BG, false);
+            widgets::pill(ui, host_label, Tokens::MUTED, false);
             if repo.pinned {
                 ui.label(RichText::new("📌 pinned").size(Tokens::SMALL + 2.0).color(Tokens::MUTED));
             }
@@ -87,8 +87,10 @@ pub fn show(
                 ui.horizontal(|ui| {
                     let mut tag_re = repo.filters.tag_regex.clone().unwrap_or_default();
                     let re_field = ui.add_sized(
-                        [240.0, 28.0],
-                        egui::TextEdit::singleline(&mut tag_re).hint_text("tag regex, e.g. ^v\\d+\\.\\d+"),
+                        [300.0, 44.0],
+                        egui::TextEdit::singleline(&mut tag_re)
+                            .hint_text("tag regex, e.g. ^v\\d+\\.\\d+")
+                            .vertical_align(egui::Align::Center),
                     );
                     let valid = tag_re.is_empty() || regex::Regex::new(&tag_re).is_ok();
                     let _ = re_field;
@@ -104,8 +106,10 @@ pub fn show(
                 ui.horizontal(|ui| {
                     let mut pat = repo.filters.asset_pattern.clone().unwrap_or_default();
                     let pat_field = ui.add_sized(
-                        [240.0, 28.0],
-                        egui::TextEdit::singleline(&mut pat).hint_text("asset glob, e.g. *-x86_64.zip"),
+                        [300.0, 44.0],
+                        egui::TextEdit::singleline(&mut pat)
+                            .hint_text("asset glob, e.g. *-x86_64.zip")
+                            .vertical_align(egui::Align::Center),
                     );
                     if pat_field.changed() {
                         let mut f = repo.filters.clone();
@@ -129,7 +133,7 @@ pub fn show(
                 ui.horizontal(|ui| {
                     widgets::version_pill(ui, &rel.tag, repo.new_release);
                     ui.label(
-                        RichText::new(&rel.published_at)
+                        RichText::new(short_date(&rel.published_at))
                             .size(Tokens::DATA)
                             .color(Tokens::MUTED),
                     );
@@ -162,47 +166,17 @@ pub fn show(
                     .rounding(8.0)
                     .inner_margin(egui::Margin::same(12.0))
                     .show(ui, |ui| {
-                        for asset in sorted {
-                            let matched = crate::ui::list::asset_matches(pattern, &asset.name);
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(&asset.name)
-                                        .size(Tokens::DATA)
-                                        .color(if matched { Tokens::TEXT } else { Tokens::MUTED }),
-                                );
-                                if matched {
-                                    widgets::pill(ui, "match", Tokens::ACCENT, false);
-                                }
-                                ui.label(
-                                    RichText::new(format_bytes(asset.size))
-                                        .size(Tokens::DATA)
-                                        .color(Tokens::MUTED),
-                                );
-                                // VT badge from cache (review fix) or "—".
-                                if let Some(info) = vt_info(&asset.name) {
-                                    widgets::vt_badge(
-                                        ui,
-                                        &info.label,
-                                        if info.flagged { Tokens::DESTRUCTIVE } else { Tokens::ACCENT },
-                                    );
-                                    if ui
-                                        .button(RichText::new("Re-scan").size(Tokens::DATA))
-                                        .clicked()
-                                    {
-                                        actions.rescan = Some((asset.name.clone(), info.sha256.clone()));
-                                    }
-                                } else {
-                                    widgets::vt_badge(ui, "—", Tokens::MUTED_BG);
-                                }
-                                if ui
-                                    .button(RichText::new("Download").size(Tokens::DATA))
-                                    .clicked()
-                                {
-                                    actions.download = Some(asset.clone());
+                        // Grid keeps size/VT/buttons in aligned columns (rows
+                        // drifted with name length before).
+                        egui::Grid::new("assets")
+                            .num_columns(4)
+                            .spacing([16.0, 8.0])
+                            .min_row_height(44.0)
+                            .show(ui, |ui| {
+                                for asset in sorted {
+                                    asset_row(ui, asset, pattern, vt_info, &mut actions);
                                 }
                             });
-                            ui.add_space(4.0);
-                        }
                         if rel.assets.is_empty() {
                             ui.label(
                                 RichText::new("No downloadable assets in this release")
@@ -237,7 +211,7 @@ pub fn show(
                                 );
                             } else if !line.trim().is_empty() {
                                 ui.label(
-                                    RichText::new(line)
+                                    RichText::new(clean_md_line(line))
                                         .size(Tokens::DATA + 1.0)
                                         .color(Tokens::TEXT),
                                 );
@@ -255,6 +229,102 @@ pub fn show(
         }
     });
     actions
+}
+
+/// One asset row in the 4-column grid: name(+match) · size · VT · Download.
+fn asset_row(
+    ui: &mut Ui,
+    asset: &Asset,
+    pattern: Option<&str>,
+    vt_info: &dyn Fn(&str) -> Option<AssetVtInfo>,
+    actions: &mut DetailActions,
+) {
+    let matched = crate::ui::list::asset_matches(pattern, &asset.name);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(&asset.name)
+                .size(Tokens::DATA)
+                .color(if matched { Tokens::TEXT } else { Tokens::MUTED }),
+        );
+        if matched {
+            widgets::pill(ui, "match", Tokens::ACCENT, false);
+        }
+    });
+    ui.label(
+        RichText::new(format_bytes(asset.size))
+            .size(Tokens::DATA)
+            .color(Tokens::MUTED),
+    );
+    // VT badge from cache (review fix) or "not scanned".
+    ui.horizontal(|ui| {
+        if let Some(info) = vt_info(&asset.name) {
+            widgets::vt_badge(
+                ui,
+                &format!("VT {}", info.label),
+                if info.flagged { Tokens::DESTRUCTIVE } else { Tokens::ACCENT },
+            );
+            if ui.button(RichText::new("Re-scan").size(Tokens::DATA)).clicked() {
+                actions.rescan = Some((asset.name.clone(), info.sha256.clone()));
+            }
+        } else {
+            widgets::vt_badge(ui, "not scanned", Tokens::MUTED);
+        }
+    });
+    let dl = egui::Button::new(
+        RichText::new("Download").size(Tokens::DATA).color(Tokens::ON_ACCENT),
+    )
+    .fill(Tokens::ACCENT);
+    if ui
+        .add(dl)
+        .on_hover_text("Downloads to a temp folder, scans on VirusTotal, then delivers")
+        .clicked()
+    {
+        actions.download = Some(asset.clone());
+    }
+    ui.end_row();
+}
+
+/// `2026-10-30T12:00:00Z` → `2026-10-30`; anything shorter passes through.
+pub fn short_date(ts: &str) -> &str {
+    ts.get(..10).unwrap_or(ts)
+}
+
+/// Light markdown cleanup for one notes line: `**`/`__`/backticks dropped,
+/// `- `/`* ` bullets become `• `, `[text](url)` keeps the text.
+pub fn clean_md_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+    let body = if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        format!("{indent}• {rest}")
+    } else {
+        line.to_string()
+    };
+    let body = body.replace("**", "").replace("__", "").replace('`', "");
+    // [text](url) → text
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body.as_str();
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        match (after.find("]("), after.find(']')) {
+            (Some(close), Some(first_close)) if close == first_close => {
+                let tail = &after[close + 2..];
+                if let Some(paren) = tail.find(')') {
+                    out.push_str(&rest[..open]);
+                    out.push_str(&after[..close]);
+                    rest = &tail[paren + 1..];
+                    continue;
+                }
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+            _ => {
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn release_page_url(repo: &Repo, tag: &str) -> String {
@@ -311,6 +381,22 @@ pub fn open_browser(url: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_date_trims_rfc3339() {
+        assert_eq!(short_date("2026-10-30T12:00:00Z"), "2026-10-30");
+        assert_eq!(short_date("2026"), "2026");
+    }
+
+    #[test]
+    fn clean_md_line_strips_common_markup() {
+        assert_eq!(clean_md_line("- **bold** fix"), "• bold fix");
+        assert_eq!(clean_md_line("  * `code` item"), "  • code item");
+        assert_eq!(clean_md_line("see [docs](https://x.y/z) now"), "see docs now");
+        assert_eq!(clean_md_line("array[0] stays"), "array[0] stays");
+        assert_eq!(clean_md_line("[broken](no close"), "[broken](no close");
+        assert_eq!(clean_md_line("plain"), "plain");
+    }
 
     #[test]
     fn format_bytes_scales() {

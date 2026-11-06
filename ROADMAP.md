@@ -35,6 +35,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Fix: config missing-file misclassified as corrupt (Windows os error 2 string-sniff) — typed LoadError
 - [x] Fix: repo removal undiscoverable — Remove button in detail view + right-click hint
 - [x] Fix: UI contrast/glitches — deep-green selection (was bright green under light text), visible hover, colored status pills, stranded "new" filter, pin marker, row hover, date-only
+- [x] Fix: visual pass (screenshots of every view) — themed buttons/checkbox/slider, panel padding, full-width rail nav, 44px uniform controls, tofu glyphs removed, asset grid, wrapped stats tiles, rates remaining+reset time, settings grid, masked tokens/passwords, Add dialog Enter/focus/pending, markdown cleanup; debug-only devshots driver
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files

@@ -9,6 +9,8 @@ use fuzzy_matcher::FuzzyMatcher;
 pub enum SortKey {
     Name,
     NewestRelease,
+    /// Not offered in the UI until per-repo check timestamps exist.
+    #[allow(dead_code)]
     LastChecked,
 }
 

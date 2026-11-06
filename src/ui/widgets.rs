@@ -1,7 +1,7 @@
 //! Reusable pill/badge/ribbon widgets (Telemetry Room grammar).
 
 use crate::ui::theme::Tokens;
-use egui::{Color32, Label, RichText, Sense, Ui};
+use egui::{Color32, Sense, Ui};
 
 /// A small rounded pill. `filled` paints the color; else muted outline.
 pub fn pill(ui: &mut Ui, text: &str, color: Color32, filled: bool) {
@@ -14,24 +14,27 @@ pub fn pill(ui: &mut Ui, text: &str, color: Color32, filled: bool) {
     } else {
         egui::Stroke::new(1.0_f32, color.gamma_multiply(0.6))
     };
-    egui::Frame::none()
-        .fill(bg)
-        .stroke(stroke)
-        .rounding(999.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-        .show(ui, |ui| {
-            ui.add(Label::new(
-                RichText::new(text).size(Tokens::SMALL + 1.0).color(fg),
-            ));
-        });
+    // Painted, not a Frame: a Frame inside a 44px row stretched to the row
+    // height and turned pills into tall ovals.
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(Tokens::SMALL + 1.0),
+        fg,
+    );
+    let size = galley.size() + egui::vec2(20.0, 8.0);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let painter = ui.painter();
+    painter.rect(rect, size.y / 2.0, bg, stroke);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, fg);
 }
 
 /// Version pill: filled green with NEW prefix when new, muted when seen.
 pub fn version_pill(ui: &mut Ui, tag: &str, is_new: bool) {
     if is_new {
-        pill(ui, &format!("NEW ↓ {tag}"), Tokens::ACCENT, true);
+        // No arrow glyph: "↓" is missing from egui's default fonts (tofu).
+        pill(ui, &format!("NEW · {tag}"), Tokens::ACCENT, true);
     } else {
-        pill(ui, &format!("↓ {tag}"), Tokens::MUTED, false);
+        pill(ui, tag, Tokens::MUTED, false);
     }
 }
 

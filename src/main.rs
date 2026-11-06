@@ -3,6 +3,8 @@
 //! App root for the binary target. Module tree mirrors the lib.
 
 mod core;
+#[cfg(debug_assertions)]
+mod devshots;
 mod net;
 mod ui;
 
@@ -85,6 +87,10 @@ struct App {
     show_add_dialog: bool,
     add_url: String,
     add_error: Option<String>,
+    /// An AddRepo command is in flight (blocks double submit).
+    add_pending: bool,
+    /// Focus the URL field on the dialog's first frame only.
+    add_needs_focus: bool,
     filter_new_only: bool,
     log_ring: VecDeque<String>,
     // Task 8: context-menu driven state.
@@ -105,6 +111,9 @@ struct App {
     /// Real temp path of the gated file (FileReady carries it; dialogs use
     /// it instead of reconstructing from the asset name — review fix).
     gate_temp_path: Option<std::path::PathBuf>,
+    /// Debug-only screenshot driver (see `devshots.rs`).
+    #[cfg(debug_assertions)]
+    dev_shots: Option<devshots::DevShots>,
 }
 
 impl Default for App {
@@ -146,6 +155,8 @@ impl App {
             show_add_dialog: false,
             add_url: String::new(),
             add_error: None,
+            add_pending: false,
+            add_needs_focus: false,
             filter_new_only: false,
             log_ring: VecDeque::with_capacity(500),
             category_dialog_for: None,
@@ -160,6 +171,8 @@ impl App {
             gate_asset_name: String::new(),
             gate_repo_id: String::new(),
             gate_temp_path: None,
+            #[cfg(debug_assertions)]
+            dev_shots: devshots::DevShots::from_env(),
         }
     }
 
@@ -178,19 +191,26 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+        #[cfg(debug_assertions)]
+        self.dev_shots_tick(ctx);
 
         // Left rail nav.
         egui::SidePanel::left("rail")
-            .frame(egui::Frame::none().fill(ui::theme::Tokens::RAIL))
+            .frame(
+                egui::Frame::none()
+                    .fill(ui::theme::Tokens::RAIL)
+                    .inner_margin(egui::Margin::symmetric(12.0, 16.0)),
+            )
             .resizable(false)
+            .exact_width(176.0)
             .show(ctx, |ui| {
-                ui.add_space(16.0);
                 ui.label(
                     egui::RichText::new("GiRustStatus")
-                        .size(ui::theme::Tokens::BODY)
+                        .size(ui::theme::Tokens::BODY + 2.0)
+                        .color(ui::theme::Tokens::TEXT)
                         .strong(),
                 );
-                ui.add_space(16.0);
+                ui.add_space(20.0);
                 for (item, view) in [
                     ("Repos", View::Repos),
                     ("Logs", View::Logs),
@@ -206,7 +226,23 @@ impl eframe::App for App {
                         } else {
                             ui::theme::Tokens::MUTED
                         });
-                    let resp = ui.selectable_label(active, label);
+                    // Full-width nav items (selectable_label hugged the
+                    // text, so highlights had ragged widths).
+                    let resp = ui
+                        .with_layout(
+                            egui::Layout::top_down_justified(egui::Align::Min),
+                            |ui| ui.add(egui::SelectableLabel::new(active, label)),
+                        )
+                        .inner;
+                    if active {
+                        // Accent bar marks the current view beyond color alone.
+                        let r = resp.rect;
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(r.min, egui::vec2(3.0, r.height())),
+                            1.5,
+                            ui::theme::Tokens::ACCENT,
+                        );
+                    }
                     if resp.clicked() {
                         self.view = view;
                     }
@@ -215,7 +251,11 @@ impl eframe::App for App {
 
         // Top bar + list, or detail.
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(ui::theme::Tokens::BG))
+            .frame(
+                egui::Frame::none()
+                    .fill(ui::theme::Tokens::BG)
+                    .inner_margin(egui::Margin::same(16.0)),
+            )
             .show(ctx, |ui| {
                 // Corrupt-state banner.
                 if let Some(err) = &self.state_error {
@@ -345,10 +385,12 @@ impl App {
                         self.show_add_dialog = false;
                         self.add_url.clear();
                         self.add_error = None;
+                        self.add_pending = false;
                         self.save_state();
                     }
                     Err(e) => {
                         self.add_error = Some(e);
+                        self.add_pending = false;
                     }
                 },
                 Event::DownloadProgress { repo_id: _, asset_name: _, downloaded, total } => {
@@ -410,7 +452,7 @@ impl App {
                                 Ok(dest) => {
                                     self.state.stats.downloads_completed += 1;
                                     self.gate = GatePhase::Done { path: dest.clone(), sha256: sha256.clone() };
-                                    self.log(format!("clean → delivered: {}", dest.display()));
+                                    self.log(format!("clean, delivered: {}", dest.display()));
                                 }
                                 Err(e) => {
                                     self.gate = GatePhase::Failed(e);
@@ -459,12 +501,12 @@ impl App {
     fn show_list(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
-            ui.add_space(4.0);
             // Search box.
             let search = ui.add_sized(
-                [360.0, 36.0],
+                [360.0, 44.0],
                 egui::TextEdit::singleline(&mut self.search)
-                    .hint_text("Search repos, owners, categories…"),
+                    .hint_text("Search repos, owners, categories…")
+                    .vertical_align(egui::Align::Center),
             );
             let _ = search;
             // Refresh.
@@ -497,7 +539,7 @@ impl App {
             // state hides the only toggle and strands an empty list.
             if new_count > 0 || self.filter_new_only {
                 let text = if self.filter_new_only {
-                    format!("✓ {new_count} new · show all")
+                    format!("Showing {new_count} new · show all")
                 } else {
                     format!("{new_count} new")
                 };
@@ -530,16 +572,18 @@ impl App {
                     .selected_text(match self.sort_key {
                         SortKey::Name => "Name",
                         SortKey::NewestRelease => "Newest release",
-                        SortKey::LastChecked => "Last checked",
+                        SortKey::LastChecked => "Name",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.sort_key, SortKey::Name, "Name");
                         ui.selectable_value(&mut self.sort_key, SortKey::NewestRelease, "Newest release");
-                        ui.selectable_value(&mut self.sort_key, SortKey::LastChecked, "Last checked");
+                        // "Last checked" hidden: no per-repo timestamp is
+                        // recorded yet, so it sorted nothing (looked broken).
                     });
                 if ui.button("+ Add repo").clicked() {
                     self.show_add_dialog = true;
                     self.add_error = None;
+                    self.add_needs_focus = true;
                 }
             });
         });
@@ -603,12 +647,7 @@ impl App {
                         .fill(fill)
                         .rounding(8.0)
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-                        .outer_margin(egui::Margin {
-                            left: 12.0,
-                            right: 12.0,
-                            top: 4.0,
-                            bottom: 4.0,
-                        })
+                        .outer_margin(egui::Margin::symmetric(0.0, 4.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 // Leading strip: green when NEW.
@@ -636,25 +675,36 @@ impl App {
                                     .rounding(6.0)
                                     .inner_margin(egui::Margin::symmetric(8.0, 8.0))
                                     .show(ui, |ui| {
-                                        ui.label(
-                                            egui::RichText::new(host_glyph)
-                                                .size(ui::theme::Tokens::SMALL + 1.0)
-                                                .color(ui::theme::Tokens::MUTED),
+                                        // Fixed box: "GL" is narrower than "GH",
+                                        // which misaligned repo names.
+                                        ui.add_sized(
+                                            [20.0, 20.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(host_glyph)
+                                                    .size(ui::theme::Tokens::SMALL + 1.0)
+                                                    .color(ui::theme::Tokens::MUTED),
+                                            ),
                                         );
                                     });
                                 ui.add_space(8.0);
                                 // Name + owner (clickable → detail).
                                 ui.vertical(|ui| {
+                                    // Leave room for date + pills; long names
+                                    // truncate instead of running under them.
+                                    ui.set_max_width((ui.available_width() - 340.0).max(120.0));
                                     let name = if repo.pinned {
                                         format!("📌 {}", repo.name)
                                     } else {
                                         repo.name.clone()
                                     };
-                                    ui.label(
-                                        egui::RichText::new(name)
-                                            .size(ui::theme::Tokens::BODY)
-                                            .color(ui::theme::Tokens::TEXT)
-                                            .strong(),
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(name)
+                                                .size(ui::theme::Tokens::BODY)
+                                                .color(ui::theme::Tokens::TEXT)
+                                                .strong(),
+                                        )
+                                        .truncate(),
                                     );
                                     ui.label(
                                         egui::RichText::new(&repo.owner)
@@ -825,19 +875,42 @@ impl App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.label("Paste a GitHub or GitLab repo URL:");
-                    ui.add_sized(
-                        [420.0, 32.0],
+                    let field = ui.add_sized(
+                        [420.0, 44.0],
                         egui::TextEdit::singleline(&mut self.add_url)
-                            .hint_text("https://github.com/owner/repo"),
+                            .hint_text("https://github.com/owner/repo")
+                            .vertical_align(egui::Align::Center),
                     );
-                    if let Some(err) = &self.add_error {
+                    // Focus the field on open so paste works immediately.
+                    if self.add_needs_focus {
+                        field.request_focus();
+                        self.add_needs_focus = false;
+                    }
+                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let can_add = !self.add_url.trim().is_empty() && !self.add_pending;
+                    if self.add_pending {
+                        ui.label(
+                            egui::RichText::new("Looking up repository…")
+                                .color(ui::theme::Tokens::MUTED),
+                        );
+                    } else if let Some(err) = &self.add_error {
                         ui.label(
                             egui::RichText::new(err)
                                 .color(ui::theme::Tokens::DESTRUCTIVE),
                         );
                     }
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        self.show_add_dialog = false;
+                        self.add_error = None;
+                    }
                     ui.horizontal(|ui| {
-                        if ui.button("Add").clicked() {
+                        let add_btn = egui::Button::new(
+                            egui::RichText::new("Add").color(ui::theme::Tokens::ON_ACCENT),
+                        )
+                        .fill(ui::theme::Tokens::ACCENT);
+                        if ui.add_enabled(can_add, add_btn).clicked() || (enter && can_add) {
+                            self.add_pending = true;
+                            self.add_error = None;
                             self.send(Command::AddRepo {
                                 url: self.add_url.clone(),
                                 config: self.config.clone(),
@@ -854,7 +927,8 @@ impl App {
 
     fn show_detail(&mut self, ui: &mut egui::Ui) {        // Back button + repo detail.
         ui.horizontal(|ui| {
-            if ui.button("← Back").clicked() {
+            // Plain text: "←" renders as tofu in egui's default fonts.
+            if ui.button("Back to list").clicked() {
                 self.selected_repo = None;
             }
         });
@@ -940,7 +1014,7 @@ impl App {
                     ui.label("Set a password for the export file:");
                     ui.add_sized(
                         [320.0, 32.0],
-                        egui::TextEdit::singleline(&mut self.export_password),
+                        egui::TextEdit::singleline(&mut self.export_password).password(true),
                     );
                     ui.horizontal(|ui| {
                         if ui.button("Export").clicked() && !self.export_password.is_empty() {
@@ -995,7 +1069,7 @@ impl App {
                             ui.label("The file is password-encrypted:");
                             ui.add_sized(
                                 [320.0, 32.0],
-                                egui::TextEdit::singleline(&mut self.import_password),
+                                egui::TextEdit::singleline(&mut self.import_password).password(true),
                             );
                         }
                         ui.horizontal(|ui| {
@@ -1217,7 +1291,7 @@ impl App {
                 match ui::gate::deliver(&path, &dl) {
                     Ok(dest) => {
                         self.state.stats.downloads_completed += 1;
-                        self.log(format!("clean → delivered: {}", dest.display()));
+                        self.log(format!("clean, delivered: {}", dest.display()));
                         self.gate = GatePhase::Done { path: dest, sha256 };
                     }
                     Err(e) => self.gate = GatePhase::Failed(e),

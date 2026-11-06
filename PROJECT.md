@@ -68,6 +68,19 @@ Three layers, one binary:
   flagged/unverified confirms carry the real temp path; cancel is wired
   through the bus), settings (save-on-change), diagnostics views.
 
+UI conventions (learned from the visual pass):
+- Controls are 44px tall (`interact_size.y`, accessibility floor); pills
+  are painted (`widgets::pill`), never Frames, or they stretch to row
+  height. Selection = deep green `SELECTED` + light text, never bright
+  green under light text.
+- egui's default fonts lack `✓ → ← ↓ ✕` (render as tofu). Safe: `— … • ·
+  ⚠ 📌 ⬇`. Check new glyphs with the devshots `glyphs` command.
+- Visual testing: `src/devshots.rs` (debug builds only, compiled out of
+  release). Run the debug exe with `GIRUST_SHOTS=<dir>` and write
+  commands to `<dir>/cmd.txt` (`view …`, `select N`, `add`, `shot name`,
+  `glyphs`, `quit`); it saves PNGs via egui's own screenshot. Needed
+  because this machine's agent session can't screen-grab GL windows.
+
 Status: **v0.1.0 shipped** — all 12 plan tasks complete, final review
 fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.
 

@@ -26,6 +26,9 @@ impl Tokens {
     pub const ACCENT: Color32 = Color32::from_rgb(0x22, 0xC5, 0x5E); // #22C55E signal green
     pub const ON_ACCENT: Color32 = Color32::from_rgb(0x0F, 0x17, 0x2A);
     pub const DESTRUCTIVE: Color32 = Color32::from_rgb(0xEF, 0x44, 0x44); // #EF4444
+    /// Control outlines: BORDER was too faint on CARD for empty checkboxes
+    /// and text fields.
+    pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x64, 0x74, 0x8B); // #64748B
     /// Hover fill: clearly lighter than CARD.
     pub const HOVER: Color32 = Color32::from_rgb(0x33, 0x41, 0x55); // #334155
     /// Selection fill: deep green, TEXT on it is ~10:1 contrast.
@@ -61,9 +64,22 @@ pub fn apply(ctx: &Context, _choice: ThemeChoice) {
     visuals.widgets.noninteractive.fg_stroke.color = Tokens::TEXT;
     visuals.widgets.noninteractive.bg_stroke.color = Tokens::BORDER;
     visuals.widgets.noninteractive.bg_stroke.width = 1.0; // hairline seams
-    visuals.widgets.inactive.bg_fill = Tokens::CARD;
+    // bg_fill: checkbox box, slider rail. weak_bg_fill: buttons, combos.
+    // Both unset before → egui's default grey buttons and checkboxes
+    // invisible on CARD.
+    visuals.widgets.inactive.bg_fill = Tokens::MUTED_BG;
+    visuals.widgets.inactive.weak_bg_fill = Tokens::MUTED_BG;
     visuals.widgets.inactive.fg_stroke.color = Tokens::TEXT;
-    visuals.widgets.inactive.bg_stroke.color = Tokens::BORDER;
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, Tokens::BORDER_STRONG);
+    for w in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        // 4px: at 6px the 16px checkbox read as a radio button.
+        w.rounding = egui::Rounding::same(4.0);
+    }
     // Hover must be visibly distinct from CARD (PRIMARY was ~identical).
     visuals.widgets.hovered.bg_fill = Tokens::HOVER;
     visuals.widgets.hovered.weak_bg_fill = Tokens::HOVER;
@@ -82,12 +98,21 @@ pub fn apply(ctx: &Context, _choice: ThemeChoice) {
     visuals.widgets.open.fg_stroke.color = Tokens::TEXT;
     // 2px text cursor (user accessibility requirement).
     visuals.text_cursor.stroke.width = 2.0;
+    visuals.text_cursor.stroke.color = Tokens::ACCENT;
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, Tokens::BORDER);
+    visuals.window_rounding = egui::Rounding::same(10.0);
+    visuals.hyperlink_color = Tokens::ACCENT;
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(8.0, 8.0); // --space-sm
     style.spacing.button_padding = egui::vec2(16.0, 10.0); // >= 44px hit height
     style.spacing.menu_margin = egui::Margin::same(8.0);
+    style.spacing.window_margin = egui::Margin::same(16.0);
+    // One control height everywhere (was 36-48px mix in the top bar);
+    // 44px = accessibility hit-target floor.
+    style.spacing.interact_size.y = 44.0;
+    style.spacing.slider_width = 220.0;
     // Type scale: 16px body, 12px small floor (accessibility).
     style.text_styles.insert(
         egui::TextStyle::Body,
