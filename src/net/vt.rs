@@ -270,9 +270,9 @@ pub async fn upload_file(
     if size > SPECIAL_UPLOAD_LIMIT {
         return Err(VtError::TooLarge);
     }
-    let file = std::fs::read(path).map_err(|e| VtError::Network(e.to_string()))?;
-    let part = reqwest::multipart::Part::bytes(file)
-        .file_name(path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+    // Streamed from disk in 64 KB chunks — never the whole file in RAM
+    // (650 MB uploads used to allocate 650 MB).
+    let part = file_part(path).await?;
 
     let (url, resp) = if size <= DIRECT_UPLOAD_LIMIT {
         let url = format!("{VT_API}/files");
@@ -341,6 +341,36 @@ pub async fn upload_file(
     Ok(id.to_string())
 }
 
+/// Chunk size for streamed uploads.
+const UPLOAD_CHUNK: usize = 64 * 1024;
+
+/// Byte stream over `file` in `UPLOAD_CHUNK` pieces; ends at EOF.
+fn chunk_stream(
+    file: tokio::fs::File,
+) -> impl futures::Stream<Item = std::io::Result<Vec<u8>>> + Send + 'static {
+    futures::stream::try_unfold(file, |mut f| async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; UPLOAD_CHUNK];
+        let n = f.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(None);
+        }
+        buf.truncate(n);
+        Ok(Some((buf, f)))
+    })
+}
+
+/// Multipart file part streamed from `path`. Length comes from the file's
+/// own metadata so Content-Length always matches the bytes sent.
+async fn file_part(path: &std::path::Path) -> Result<reqwest::multipart::Part, VtError> {
+    let io = |e: std::io::Error| VtError::Network(e.to_string());
+    let file = tokio::fs::File::open(path).await.map_err(io)?;
+    let len = file.metadata().await.map_err(io)?.len();
+    let body = reqwest::Body::wrap_stream(chunk_stream(file));
+    Ok(reqwest::multipart::Part::stream_with_length(body, len)
+        .file_name(path.file_name().unwrap_or_default().to_string_lossy().into_owned()))
+}
+
 pub fn now_rfc3339() -> String {
     // No chrono dep; epoch seconds suffice for display.
     let secs = std::time::SystemTime::now()
@@ -353,6 +383,21 @@ pub fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chunk_stream_yields_exact_bytes_in_bounded_chunks() {
+        use futures::StreamExt;
+        let p = std::env::temp_dir().join(format!("grs_vt_stream_{}", std::process::id()));
+        let data: Vec<u8> = (0..(UPLOAD_CHUNK * 3 + 17)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&p, &data).unwrap();
+        let f = tokio::fs::File::open(&p).await.unwrap();
+        let chunks: Vec<Vec<u8>> = chunk_stream(f).map(|c| c.unwrap()).collect().await;
+        assert!(chunks.iter().all(|c| !c.is_empty() && c.len() <= UPLOAD_CHUNK));
+        assert_eq!(chunks.concat(), data);
+        assert!(file_part(&p).await.is_ok());
+        std::fs::remove_file(&p).unwrap();
+        assert!(file_part(&p).await.is_err());
+    }
 
     const AT: &str = "2026-11-05T00:00:00Z";
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

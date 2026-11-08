@@ -46,7 +46,7 @@ Status: planned → in progress → done. Update after every task.
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [x] tmp/ startup cleanup of stale temp files
-- [ ] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
+- [x] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
 - [x] "Last checked" sort needs a last-check field per repo
 - [x] Asset date column in detail table
 - [ ] Rate-limit reset as local-time countdown instead of raw epoch
