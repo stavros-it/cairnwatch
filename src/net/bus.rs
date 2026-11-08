@@ -336,6 +336,7 @@ async fn refresh_one(
             }
         }
     }
+    r.last_checked = Some(vt::now_rfc3339());
     // Header capture: latest_snapshot records what the last response sent.
     *limits_out = crate::net::ratelimits::latest_snapshot();
     // Seen-state: a repo with no last_seen_tag adopts its current release
@@ -442,6 +443,7 @@ pub fn spawn(
                             gl_project_id: None,
                             last_seen_tag: None,
                             installed_tag: None,
+                            last_checked: None,
                             latest: None,
                             status: RepoStatus::Ok,
                             new_release: false,

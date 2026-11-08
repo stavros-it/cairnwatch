@@ -181,6 +181,8 @@ impl App {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let refresh_in_flight = Arc::new(AtomicBool::new(false));
+        // Stale temp files from interrupted downloads/crashes.
+        let _ = crate::core::paths::cleanup_tmp(&crate::core::paths::tmp_dir());
         net::bus::spawn(cmd_rx, event_tx);
         let mut app = Self {
             state,
@@ -673,13 +675,12 @@ impl App {
                     .selected_text(match self.sort_key {
                         SortKey::Name => "Name",
                         SortKey::NewestRelease => "Newest release",
-                        SortKey::LastChecked => "Name",
+                        SortKey::LastChecked => "Last checked",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.sort_key, SortKey::Name, "Name");
                         ui.selectable_value(&mut self.sort_key, SortKey::NewestRelease, "Newest release");
-                        // "Last checked" hidden: no per-repo timestamp is
-                        // recorded yet, so it sorted nothing (looked broken).
+                        ui.selectable_value(&mut self.sort_key, SortKey::LastChecked, "Last checked");
                     });
                 if ui.button("+ Add repo").clicked() {
                     self.show_add_dialog = true;

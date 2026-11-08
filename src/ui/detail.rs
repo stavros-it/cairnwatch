@@ -174,7 +174,7 @@ pub fn show(
                         // Grid keeps size/VT/buttons in aligned columns (rows
                         // drifted with name length before).
                         egui::Grid::new("assets")
-                            .num_columns(4)
+                            .num_columns(5)
                             .spacing([16.0, 8.0])
                             .min_row_height(44.0)
                             .show(ui, |ui| {
@@ -279,7 +279,7 @@ fn installed_row(ui: &mut Ui, repo: &Repo, latest_tag: &str, actions: &mut Detai
     });
 }
 
-/// One asset row in the 4-column grid: name(+match) · size · VT · Download.
+/// One asset row in the 5-column grid: name(+match) · size · date · VT · Download.
 fn asset_row(
     ui: &mut Ui,
     asset: &Asset,
@@ -304,6 +304,8 @@ fn asset_row(
     if asset.size == 0 {
         size_label.on_hover_text("size not reported by the host");
     }
+    let date = asset.updated_at.as_deref().map(short_date).unwrap_or("—");
+    ui.label(RichText::new(date).size(Tokens::DATA).color(Tokens::MUTED));
     // VT badge from cache (review fix) or "not scanned".
     ui.horizontal(|ui| {
         if let Some(info) = vt_info(&asset.name) {

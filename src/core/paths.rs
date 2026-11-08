@@ -24,6 +24,18 @@ pub fn tmp_dir() -> PathBuf {
     app_dir().join("tmp")
 }
 
+/// Delete stale files left in `dir` by interrupted downloads. Regular
+/// files only; subfolders are left alone. Returns the number removed.
+pub fn cleanup_tmp(dir: &std::path::Path) -> usize {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    rd.flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
 /// Default download destination (the user may override in config).
 pub fn default_download_dir() -> PathBuf {
     app_dir().join("downloads")
@@ -40,6 +52,18 @@ mod tests {
         assert!(repos_file().starts_with(&base));
         assert!(tmp_dir().starts_with(&base));
         assert!(default_download_dir().starts_with(&base));
+    }
+
+    #[test]
+    fn cleanup_tmp_removes_files_keeps_dirs() {
+        let d = std::env::temp_dir().join(format!("grs_tmp_test_{}", std::process::id()));
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        std::fs::write(d.join("a.part"), b"x").unwrap();
+        std::fs::write(d.join("b.zip"), b"x").unwrap();
+        assert_eq!(cleanup_tmp(&d), 2);
+        assert!(d.join("sub").is_dir());
+        assert_eq!(cleanup_tmp(&d.join("missing")), 0);
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

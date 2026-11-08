@@ -213,6 +213,7 @@ impl crate::App {
                                     name: name.to_string(),
                                     size: 0,
                                     url: url.to_string(),
+                                    updated_at: None,
                                 };
                                 self.start_download(&repo_id, asset);
                             }

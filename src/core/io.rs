@@ -176,6 +176,7 @@ mod tests {
             gl_project_id: None,
             last_seen_tag: Some("v1".into()),
             installed_tag: None,
+            last_checked: None,
             latest: None,
             status: RepoStatus::Ok,
             new_release: false,

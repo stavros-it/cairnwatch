@@ -9,8 +9,7 @@ use fuzzy_matcher::FuzzyMatcher;
 pub enum SortKey {
     Name,
     NewestRelease,
-    /// Not offered in the UI until per-repo check timestamps exist.
-    #[allow(dead_code)]
+    /// Most recently refreshed first; never-checked last.
     LastChecked,
 }
 
@@ -34,7 +33,12 @@ pub fn compare(a: &Repo, b: &Repo, key: SortKey) -> std::cmp::Ordering {
                 (Some(x), Some(y)) => y.published_at.cmp(&x.published_at),
             }
         }
-        SortKey::LastChecked => O::Equal, // Task 9 tracks last_checked timestamps
+        SortKey::LastChecked => match (&a.last_checked, &b.last_checked) {
+            (None, None) => O::Equal,
+            (None, Some(_)) => O::Greater,
+            (Some(_), None) => O::Less,
+            (Some(x), Some(y)) => y.cmp(x),
+        },
     }
 }
 
@@ -128,6 +132,7 @@ mod tests {
             gl_project_id: None,
             last_seen_tag: None,
             installed_tag: None,
+            last_checked: None,
             latest: published.map(|at| Release {
                 tag: "1.0.0".into(),
                 published_at: at.into(),
@@ -137,6 +142,7 @@ mod tests {
                     name: "x.zip".into(),
                     size: 1,
                     url: "https://x".into(),
+                    updated_at: None,
                 }],
             }),
             status: RepoStatus::Ok,
@@ -150,6 +156,17 @@ mod tests {
         let p = repo("zzz", "o", true, Some("2026-01-01T00:00:00Z"));
         assert_eq!(compare(&p, &a, SortKey::Name), std::cmp::Ordering::Less);
         assert_eq!(compare(&p, &a, SortKey::NewestRelease), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn last_checked_sort_recent_first_missing_last() {
+        let mut a = repo("a", "o", false, None);
+        let mut b = repo("b", "o", false, None);
+        let c = repo("c", "o", false, None);
+        a.last_checked = Some("2026-11-01T00:00:00Z".into());
+        b.last_checked = Some("2026-11-05T00:00:00Z".into());
+        assert_eq!(compare(&b, &a, SortKey::LastChecked), std::cmp::Ordering::Less);
+        assert_eq!(compare(&a, &c, SortKey::LastChecked), std::cmp::Ordering::Less);
     }
 
     #[test]
@@ -216,7 +233,7 @@ mod tests {
     #[test]
     fn sort_assets_puts_matches_first_stably() {
         use crate::core::models::Asset;
-        let mk = |n: &str| Asset { name: n.into(), size: 0, url: String::new() };
+        let mk = |n: &str| Asset { name: n.into(), size: 0, url: String::new(), updated_at: None };
         let a = mk("zz.zip");
         let b = mk("match-x86_64.apk");
         let c = mk("aa.zip");
@@ -231,7 +248,7 @@ mod tests {
     #[test]
     fn sort_assets_no_pattern_keeps_order() {
         use crate::core::models::Asset;
-        let mk = |n: &str| Asset { name: n.into(), size: 0, url: String::new() };
+        let mk = |n: &str| Asset { name: n.into(), size: 0, url: String::new(), updated_at: None };
         let a = mk("zz.zip");
         let b = mk("aa.zip");
         let assets = vec![&a, &b];

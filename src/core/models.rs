@@ -33,6 +33,9 @@ pub struct Asset {
     pub name: String,
     pub size: u64,
     pub url: String,
+    /// RFC3339 last-updated time (GitHub only; GitLab links carry none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 /// The latest release of a tracked repo.
@@ -112,6 +115,9 @@ pub struct Repo {
     /// different from `latest.tag`, the UI shows "update available".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_tag: Option<String>,
+    /// RFC3339 time of the last successful refresh of this repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked: Option<String>,
     /// Latest release snapshot from the last successful fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest: Option<Release>,
@@ -219,6 +225,7 @@ mod tests {
             gl_project_id: Some(42),
             last_seen_tag: Some("v1.0.0".into()),
             installed_tag: None,
+            last_checked: None,
             latest: Some(Release {
                 tag: "v1.1.0".into(),
                 published_at: "2026-11-01T12:00:00Z".into(),
@@ -228,6 +235,7 @@ mod tests {
                     name: "proj-linux.zip".into(),
                     size: 1234,
                     url: "https://example.com/x.zip".into(),
+                    updated_at: None,
                 }],
             }),
             status: RepoStatus::Ok,

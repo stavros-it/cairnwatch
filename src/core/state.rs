@@ -78,6 +78,7 @@ mod tests {
                 gl_project_id: None,
                 last_seen_tag: Some("1.81.0".into()),
                 installed_tag: None,
+                last_checked: None,
                 latest: Some(Release {
                     tag: "1.82.0".into(),
                     published_at: "2026-10-31T00:00:00Z".into(),
@@ -87,6 +88,7 @@ mod tests {
                         name: "rust.exe".into(),
                         size: 1,
                         url: "https://example.com/rust.exe".into(),
+                        updated_at: None,
                     }],
                 }),
                 status: RepoStatus::Ok,

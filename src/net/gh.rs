@@ -23,6 +23,8 @@ pub struct GhAsset {
     pub name: String,
     pub size: u64,
     pub browser_download_url: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +50,7 @@ impl GhRelease {
                     name: a.name.clone(),
                     size: a.size,
                     url: a.browser_download_url.clone(),
+                    updated_at: a.updated_at.clone(),
                 })
                 .collect(),
         }
@@ -217,6 +220,7 @@ mod tests {
                 name: "app.zip".into(),
                 size: 10,
                 browser_download_url: "https://x/app.zip".into(),
+                updated_at: None,
             }],
         };
         let m = gh.to_model();

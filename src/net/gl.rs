@@ -48,7 +48,7 @@ impl GlRelease {
             .filter_map(|l| {
                 let name = l.name.clone()?;
                 let url = l.direct_asset_url.clone().or_else(|| l.url.clone())?;
-                Some(Asset { name, size: 0, url })
+                Some(Asset { name, size: 0, url, updated_at: None })
             })
             .collect();
         // Generic source archives fill the list when no curated links exist.
@@ -60,6 +60,7 @@ impl GlRelease {
                         name,
                         size: 0,
                         url: url.to_string(),
+                        updated_at: None,
                     });
                 }
             }

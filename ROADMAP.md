@@ -45,10 +45,10 @@ Status: planned → in progress → done. Update after every task.
 - [x] Feat: mark installed version per repo (detail "Mark <tag> as installed"/Clear; list shows "update"/"installed" pill; `installed_tag` in repos.json)
 
 ## Post-1.0 backlog (deferred minors from the final review)
-- [ ] tmp/ startup cleanup of stale temp files
+- [x] tmp/ startup cleanup of stale temp files
 - [ ] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
-- [ ] "Last checked" sort needs a last-check field per repo
-- [ ] Asset date column in detail table
+- [x] "Last checked" sort needs a last-check field per repo
+- [x] Asset date column in detail table
 - [ ] Rate-limit reset as local-time countdown instead of raw epoch
 - [ ] Timestamps + full API-call coverage + configurable ring size in logs
 - [ ] CSPRNG salt/IV (getrandom) for export encryption
