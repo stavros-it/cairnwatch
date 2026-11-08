@@ -42,6 +42,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] E2E upload fallback (random 64 KB files via local server): 404 → upload → poll → clean → delivered in 49 s. Fixed: Scanning dialog had no Cancel/stage/elapsed (up to 10 min locked behind the modal); cancel now stops VT polling within ~1 s and deletes temp; shared cancel flag reset by the next download could un-cancel a running flow (now per-download); late events from a cancelled flow could hit a newer download (events now matched to the gate's asset)
 
 - [x] Polish: exe version info (0.1.0, product/description), README (setup, keyring, move via encrypted export), fresh-folder start verified, GUI subsystem, icon embedded
+- [x] Feat: mark installed version per repo (detail "Mark <tag> as installed"/Clear; list shows "update"/"installed" pill; `installed_tag` in repos.json)
 
 ## Post-1.0 backlog (deferred minors from the final review)
 - [ ] tmp/ startup cleanup of stale temp files

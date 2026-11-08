@@ -175,6 +175,7 @@ mod tests {
             filters: Default::default(),
             gl_project_id: None,
             last_seen_tag: Some("v1".into()),
+            installed_tag: None,
             latest: None,
             status: RepoStatus::Ok,
             new_release: false,

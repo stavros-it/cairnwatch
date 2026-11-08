@@ -826,6 +826,21 @@ impl App {
                                         ui.add_space(8.0);
                                         ui::widgets::status_pill(ui, &repo.status);
                                         ui::widgets::version_pill(ui, &rel.tag, is_new);
+                                        if repo.update_available() {
+                                            ui::widgets::pill(
+                                                ui,
+                                                "update",
+                                                ui::theme::Tokens::AMBER,
+                                                false,
+                                            );
+                                        } else if repo.up_to_date() {
+                                            ui::widgets::pill(
+                                                ui,
+                                                "installed",
+                                                ui::theme::Tokens::MUTED,
+                                                false,
+                                            );
+                                        }
                                         ui.label(
                                             // ISO date only; full timestamp is noise.
                                             egui::RichText::new(
@@ -1120,6 +1135,16 @@ impl App {
             }
             self.save_state();
             self.log("filters updated");
+        }
+        if let Some(tag) = actions.installed_changed {
+            if let Some(r) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
+                r.installed_tag = tag.clone();
+            }
+            self.save_state();
+            match tag {
+                Some(t) => self.log(format!("marked installed: {} {t}", repo.display_name())),
+                None => self.log(format!("installed mark cleared: {}", repo.display_name())),
+            }
         }
         if let Some(asset) = actions.download {
             self.start_download(&repo.id, asset);

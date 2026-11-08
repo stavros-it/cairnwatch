@@ -127,6 +127,7 @@ mod tests {
             filters: ReleaseFilters::default(),
             gl_project_id: None,
             last_seen_tag: None,
+            installed_tag: None,
             latest: published.map(|at| Release {
                 tag: "1.0.0".into(),
                 published_at: at.into(),

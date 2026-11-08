@@ -108,6 +108,10 @@ pub struct Repo {
     /// Last release tag the user has seen (NEW pill clears against this).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_tag: Option<String>,
+    /// Release tag the user marked as installed locally. When set and
+    /// different from `latest.tag`, the UI shows "update available".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_tag: Option<String>,
     /// Latest release snapshot from the last successful fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest: Option<Release>,
@@ -123,6 +127,23 @@ impl Repo {
     #[allow(dead_code)] // used by Task 6 UI
     pub fn display_name(&self) -> String {
         format!("{}/{}", self.owner, self.name)
+    }
+
+    /// True when the user marked an installed version and the latest
+    /// release tag differs from it.
+    pub fn update_available(&self) -> bool {
+        match (&self.installed_tag, &self.latest) {
+            (Some(inst), Some(rel)) => inst != &rel.tag,
+            _ => false,
+        }
+    }
+
+    /// True when the installed version equals the latest release.
+    pub fn up_to_date(&self) -> bool {
+        match (&self.installed_tag, &self.latest) {
+            (Some(inst), Some(rel)) => inst == &rel.tag,
+            _ => false,
+        }
     }
 }
 
@@ -197,6 +218,7 @@ mod tests {
             },
             gl_project_id: Some(42),
             last_seen_tag: Some("v1.0.0".into()),
+            installed_tag: None,
             latest: Some(Release {
                 tag: "v1.1.0".into(),
                 published_at: "2026-11-01T12:00:00Z".into(),
@@ -214,5 +236,23 @@ mod tests {
         let json = serde_json::to_string(&repo).unwrap();
         let back: Repo = serde_json::from_str(&json).unwrap();
         assert_eq!(back, repo);
+    }
+
+    #[test]
+    fn update_available_compares_installed_to_latest() {
+        let mut repo: Repo = serde_json::from_str(
+            r#"{"id":"github.com/o/n","host":"GitHub","owner":"o","name":"n",
+                "latest":{"tag":"v2","published_at":"","prerelease":false,"notes":"","assets":[]}}"#,
+        )
+        .unwrap();
+        // Old repos.json without installed_tag loads fine; no update shown.
+        assert!(repo.installed_tag.is_none());
+        assert!(!repo.update_available());
+        assert!(!repo.up_to_date());
+        repo.installed_tag = Some("v1".into());
+        assert!(repo.update_available());
+        repo.installed_tag = Some("v2".into());
+        assert!(!repo.update_available());
+        assert!(repo.up_to_date());
     }
 }

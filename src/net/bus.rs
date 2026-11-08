@@ -441,6 +441,7 @@ pub fn spawn(
                             filters: Default::default(),
                             gl_project_id: None,
                             last_seen_tag: None,
+                            installed_tag: None,
                             latest: None,
                             status: RepoStatus::Ok,
                             new_release: false,

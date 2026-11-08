@@ -20,6 +20,8 @@ pub struct DetailActions {
     pub filters_changed: Option<crate::core::models::ReleaseFilters>,
     pub rescan: Option<(String, String)>,
     pub remove: bool,
+    /// `Some(Some(tag))` marks `tag` installed; `Some(None)` clears it.
+    pub installed_changed: Option<Option<String>>,
 }
 
 /// Render the detail panel for `repo`. Returns the asset the user clicked
@@ -35,6 +37,7 @@ pub fn show(
         filters_changed: None,
         rescan: None,
         remove: false,
+        installed_changed: None,
     };
     ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(8.0);
@@ -148,6 +151,8 @@ pub fn show(
                         let _ = open::url(&url);
                     }
                 });
+                ui.add_space(6.0);
+                installed_row(ui, repo, &rel.tag, &mut actions);
                 ui.add_space(12.0);
 
                 ui.label(
@@ -229,6 +234,49 @@ pub fn show(
         }
     });
     actions
+}
+
+/// "Installed: X" status + mark/clear buttons.
+fn installed_row(ui: &mut Ui, repo: &Repo, latest_tag: &str, actions: &mut DetailActions) {
+    ui.horizontal(|ui| {
+        match repo.installed_tag.as_deref() {
+            None => {
+                ui.label(
+                    RichText::new("Installed: not marked")
+                        .size(Tokens::DATA)
+                        .color(Tokens::MUTED),
+                );
+            }
+            Some(inst) => {
+                ui.label(
+                    RichText::new(format!("Installed: {inst}"))
+                        .size(Tokens::DATA)
+                        .color(Tokens::TEXT),
+                );
+                if repo.update_available() {
+                    widgets::pill(ui, "update available", Tokens::AMBER, false);
+                } else {
+                    widgets::pill(ui, "up to date", Tokens::ACCENT, false);
+                }
+            }
+        }
+        if repo.installed_tag.as_deref() != Some(latest_tag)
+            && ui
+                .button(RichText::new(format!("Mark {latest_tag} as installed")).size(Tokens::DATA))
+                .on_hover_text("Remember this version as the one you have installed")
+                .clicked()
+        {
+            actions.installed_changed = Some(Some(latest_tag.to_string()));
+        }
+        if repo.installed_tag.is_some()
+            && ui
+                .button(RichText::new("Clear").size(Tokens::DATA))
+                .on_hover_text("Forget the installed version")
+                .clicked()
+        {
+            actions.installed_changed = Some(None);
+        }
+    });
 }
 
 /// One asset row in the 4-column grid: name(+match) · size · VT · Download.
