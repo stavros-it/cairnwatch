@@ -12,6 +12,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Portable GitHub/GitLab release tracker with a VirusTotal download gate"
 license = "MIT"
+repository = "https://github.com/stavros-it/cairnwatch"
+readme = "README.md"
 
 [dependencies]
 eframe = { version = "0.29", default-features = false, features = [

@@ -1,4 +1,4 @@
-# Root .gitignore for GiRustStatus repo
+# Root .gitignore for the Cairnwatch repo
 
 # ObtainiumPlus-main is a read-only reference copy (upstream design
 # inspiration), not part of this repo's own source.
@@ -29,3 +29,13 @@ design-system/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local build output copy, internal agent/planning material
+Latest Release/
+.superpowers/
+.impeccable/
+docs/superpowers/
+AGENTS.md
+PRODUCT.md
+PROJECT.md
+ROADMAP.md
