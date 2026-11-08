@@ -303,12 +303,8 @@ pub async fn upload_file(
             .json()
             .await
             .map_err(|e| VtError::Parse(e.to_string()))?;
-        let upload_url = json
-            .get("data")
-            .and_then(|d| d.get("upload_url"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| VtError::Parse("missing upload_url".into()))?
-            .to_string();
+        let upload_url = parse_upload_url(&json)
+            .ok_or_else(|| VtError::Parse("missing upload_url".into()))?;
         let r = client
             .post(&upload_url)
             .header("x-apikey", key)
@@ -339,6 +335,15 @@ pub async fn upload_file(
         .and_then(|v| v.as_str())
         .ok_or_else(|| VtError::Parse("missing analysis id".into()))?;
     Ok(id.to_string())
+}
+
+/// `GET /files/upload_url` answers `{"data": "<url>"}` (a plain string);
+/// also accept `{"data": {"upload_url": "<url>"}}` defensively.
+fn parse_upload_url(json: &Value) -> Option<String> {
+    let data = json.get("data")?;
+    data.as_str()
+        .or_else(|| data.get("upload_url").and_then(|v| v.as_str()))
+        .map(str::to_string)
 }
 
 /// Chunk size for streamed uploads.
@@ -383,6 +388,16 @@ pub fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_url_parses_string_and_object_forms() {
+        let a: Value = serde_json::json!({"data": "https://x/upload/abc"});
+        let b: Value = serde_json::json!({"data": {"upload_url": "https://x/upload/def"}});
+        let c: Value = serde_json::json!({"data": 5});
+        assert_eq!(parse_upload_url(&a).as_deref(), Some("https://x/upload/abc"));
+        assert_eq!(parse_upload_url(&b).as_deref(), Some("https://x/upload/def"));
+        assert_eq!(parse_upload_url(&c), None);
+    }
 
     #[tokio::test]
     async fn chunk_stream_yields_exact_bytes_in_bounded_chunks() {
