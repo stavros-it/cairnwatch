@@ -212,6 +212,19 @@ async fn run_download_flow(
         return;
     }
     let mut outcome = vt::lookup_sha256(&client, &config.vt_api_key, &sha).await;
+    let _ = event_tx.send(Event::LogLine(format!(
+        "VirusTotal hash lookup {}: {}",
+        &sha[..sha.len().min(12)],
+        match &outcome {
+            vt::LookupOutcome::Report(v, _) => {
+                let (f, t) = v.flagged_ratio();
+                format!("report {f}/{t} flagged")
+            }
+            vt::LookupOutcome::Unknown => "unknown (404)".to_string(),
+            vt::LookupOutcome::Unscanned => "never analysed".to_string(),
+            vt::LookupOutcome::NoVerdict(e) => format!("no verdict ({e})"),
+        }
+    )));
     // Upload fallback: 404 (Unknown) or never-analysed report (Unscanned)
     // — both mean "no verdict to read yet" (spec line 161).
     let fallback_eligible = matches!(
@@ -383,6 +396,11 @@ pub fn spawn(
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
                     Command::RefreshAll { repos, config } => {
+                        let _ = event_tx.send(Event::LogLine(format!(
+                            "refresh started: {} repos, {} parallel",
+                            repos.len(),
+                            config.refresh_concurrency
+                        )));
                         let sem = Arc::new(tokio::sync::Semaphore::new(
                             config.refresh_concurrency.max(1) as usize,
                         ));

@@ -30,6 +30,8 @@ pub struct Config {
     /// Parallel repo fetches during refresh.
     pub refresh_concurrency: u32,
     pub theme: ThemeChoice,
+    /// Max lines kept in the in-memory log.
+    pub log_ring_size: u32,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             gitlab_pat: None,
             refresh_concurrency: 4,
             theme: ThemeChoice::Dark,
+            log_ring_size: 500,
         }
     }
 }
@@ -88,6 +91,7 @@ mod tests {
             gitlab_pat: Some("glpat_y".into()),
             refresh_concurrency: 7,
             theme: ThemeChoice::Dark,
+            log_ring_size: 1234,
         };
         let dir = std::env::temp_dir().join("girust_cfg_test");
         std::fs::create_dir_all(&dir).unwrap();

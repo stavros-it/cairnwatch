@@ -192,6 +192,7 @@ mod tests {
             gitlab_pat: None,
             refresh_concurrency: 2,
             theme: Default::default(),
+            log_ring_size: 500,
         };
         (state, config)
     }

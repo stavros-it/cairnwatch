@@ -45,10 +45,7 @@ const VT_FREE_PER_MIN: u32 = 4;
 const VT_FREE_PER_DAY: u32 = 500;
 
 fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::core::clock::now_epoch()
 }
 
 /// "in 12 min" / "in 1 h 5 min" / "now". Pure — unit-tested.
@@ -83,7 +80,11 @@ fn remaining_row(ui: &mut Ui, name: &str, remaining: Option<u32>, reset: Option<
                 ui.label(RichText::new(format!("{r} remaining")).size(Tokens::DATA).color(color));
                 if let Some(e) = reset {
                     ui.label(
-                        RichText::new(format!("resets {}", reset_in(e, now)))
+                        RichText::new(format!(
+                            "resets {} (at {})",
+                            reset_in(e, now),
+                            crate::core::clock::local_hm(e)
+                        ))
                             .size(Tokens::SMALL + 2.0)
                             .color(Tokens::MUTED),
                     );

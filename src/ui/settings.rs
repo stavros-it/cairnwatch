@@ -107,6 +107,15 @@ pub fn show(ui: &mut Ui, config: &mut Config, secrets_error: Option<&str>) -> Se
                 });
             ui.add_space(12.0);
 
+            section(ui, "LOGS");
+            let mut n = config.log_ring_size as i32;
+            ui.scope(|ui| {
+                ui.spacing_mut().interact_size.y = 28.0;
+                ui.add(egui::Slider::new(&mut n, 100..=5000).text("lines kept in memory"));
+            });
+            config.log_ring_size = n.clamp(100, 5000) as u32;
+            ui.add_space(12.0);
+
             section(ui, "BACKUP (portable move)");
             ui.label(
                 RichText::new("Export writes one file with repos, seen state, VT cache, stats and settings. Only the encrypted export (AES-256 + PBKDF2) includes your API keys.")

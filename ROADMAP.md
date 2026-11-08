@@ -49,7 +49,7 @@ Status: planned → in progress → done. Update after every task.
 - [x] Streamed VT upload (avoid whole-file RAM read for 650 MB files)
 - [x] "Last checked" sort needs a last-check field per repo
 - [x] Asset date column in detail table
-- [ ] Rate-limit reset as local-time countdown instead of raw epoch
-- [ ] Timestamps + full API-call coverage + configurable ring size in logs
-- [ ] CSPRNG salt/IV (getrandom) for export encryption
+- [x] Rate-limit reset as local-time countdown instead of raw epoch
+- [x] Timestamps + full API-call coverage + configurable ring size in logs
+- [x] CSPRNG salt/IV (getrandom) for export encryption (already done in the keyring task)
 - [ ] Smoke test against the app's own client/DTO code

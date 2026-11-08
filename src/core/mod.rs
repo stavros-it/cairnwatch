@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod clock;
 pub mod config;
 pub mod io;
 pub mod models;

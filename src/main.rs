@@ -240,8 +240,10 @@ impl App {
     }
 
     fn log(&mut self, line: impl Into<String>) {
-        self.log_ring.push_back(line.into());
-        while self.log_ring.len() > 500 {
+        self.log_ring
+            .push_back(format!("[{}] {}", crate::core::clock::local_hms_now(), line.into()));
+        let cap = self.config.log_ring_size.clamp(100, 5000) as usize;
+        while self.log_ring.len() > cap {
             self.log_ring.pop_front();
         }
     }
@@ -456,7 +458,16 @@ impl App {
             any = true;
             match event {
                 Event::RepoUpdated(repo) => {
-                    self.log(format!("repo updated: {}", repo.display_name()));
+                    self.log(format!(
+                        "fetched {} ({}) latest={} status={}",
+                        repo.display_name(),
+                        match &repo.host {
+                            crate::core::models::RepoHost::GitHub => "GitHub".to_string(),
+                            crate::core::models::RepoHost::GitLab { host } => host.clone(),
+                        },
+                        repo.latest.as_ref().map(|l| l.tag.as_str()).unwrap_or("-"),
+                        ui::list::status_label(&repo.status),
+                    ));
                     if let Some(existing) = self.state.repos.iter_mut().find(|r| r.id == repo.id) {
                         *existing = repo;
                     }
@@ -570,6 +581,7 @@ impl App {
                     }
                 }
                 Event::ScanStage { repo_id, asset_name, stage } => {
+                    self.log(format!("VirusTotal: {stage} ({asset_name})"));
                     if self.is_gate_asset(&repo_id, &asset_name) {
                         self.scan_stage = stage;
                     }
