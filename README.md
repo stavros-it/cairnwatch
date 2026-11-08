@@ -1,4 +1,4 @@
-# GiRustStatus
+# Cairnwatch
 
 Portable Windows app that tracks GitHub/GitLab repos you follow, shows new
 releases, and checks every download on VirusTotal before it reaches your
@@ -6,7 +6,7 @@ download folder. It never installs anything; you run the files yourself.
 
 ## Run
 
-Copy `giruststatus.exe` anywhere and start it. It keeps `config.toml` and
+Copy `cairnwatch.exe` anywhere and start it. It keeps `config.toml` and
 `repos.json` next to the exe, plus `tmp/` and `downloads/`. No installer,
 no registry.
 
@@ -30,7 +30,7 @@ This is the one thing outside the app folder. Consequences:
 ## Moving to another PC
 
 1. Settings, **Export (encrypted, with keys...)**, choose a password. This
-   writes `girust-export.enc` next to the exe.
+   writes `cairnwatch-export.enc` next to the exe.
 2. Copy the folder (with that file) to the new PC.
 3. Settings, **Import...**, enter the password. Repos, state and keys come
    across; the keys land in the new PC's Credential Manager.
@@ -45,4 +45,4 @@ a blocking dialog with Cancel as the default (Enter or Esc).
 
 ## Build
 
-`cargo build --release`, output `target/release/giruststatus.exe`.
+`cargo build --release`, output `target/release/cairnwatch.exe`.

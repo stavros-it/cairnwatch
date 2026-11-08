@@ -145,7 +145,7 @@ pub async fn lookup_sha256(
     let resp = match client
         .get(&url)
         .header("x-apikey", key)
-        .header("User-Agent", "GiRustStatus")
+        .header("User-Agent", "Cairnwatch")
         .send()
         .await
         .inspect(|r| crate::net::ratelimits::observe_vt(r.headers()))

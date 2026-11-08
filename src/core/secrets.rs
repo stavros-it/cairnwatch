@@ -16,6 +16,7 @@
 use crate::core::config::Config;
 
 /// Credential Manager "service". Entries appear as `<account>.GiRustStatus`.
+// Kept from the pre-rename app name so existing stored keys stay found.
 pub const SERVICE: &str = "GiRustStatus";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

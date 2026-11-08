@@ -274,6 +274,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "cairnwatch"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64 0.22.1",
+ "cbc",
+ "eframe",
+ "egui",
+ "futures",
+ "fuzzy-matcher",
+ "getrandom 0.2.17",
+ "globset",
+ "image",
+ "keyring",
+ "pbkdf2",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "toml 0.8.23",
+ "winresource",
+]
+
+[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1005,32 +1031,6 @@ dependencies = [
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "giruststatus"
-version = "0.1.0"
-dependencies = [
- "aes",
- "base64 0.22.1",
- "cbc",
- "eframe",
- "egui",
- "futures",
- "fuzzy-matcher",
- "getrandom 0.2.17",
- "globset",
- "image",
- "keyring",
- "pbkdf2",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "toml 0.8.23",
- "winresource",
 ]
 
 [[package]]

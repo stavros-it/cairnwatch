@@ -92,7 +92,7 @@ pub async fn resolve_project_id(
 ) -> Result<u64, GlError> {
     let encoded = urlencoding_simple(owner_slash_name);
     let url = format!("{}/projects/{}", api_base(host), encoded);
-    let mut req = client.get(&url).header("User-Agent", "GiRustStatus");
+    let mut req = client.get(&url).header("User-Agent", "Cairnwatch");
     if let Some(pat) = pat {
         req = req.header("PRIVATE-TOKEN", pat);
     }
@@ -141,7 +141,7 @@ pub async fn fetch_latest(
     pat: Option<&str>,
 ) -> Result<Option<Release>, GlError> {
     let url = format!("{}/projects/{}/releases?per_page=1", api_base(host), project_id);
-    let mut req = client.get(&url).header("User-Agent", "GiRustStatus");
+    let mut req = client.get(&url).header("User-Agent", "Cairnwatch");
     if let Some(pat) = pat {
         req = req.header("PRIVATE-TOKEN", pat);
     }

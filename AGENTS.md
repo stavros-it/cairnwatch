@@ -1,11 +1,11 @@
-# AGENTS.md — GiRustStatus Working Protocol
+# AGENTS.md — Cairnwatch Working Protocol
 
 Any agent (or human collaborator) working in this repo follows these rules.
 They sit above personal preference and above skill defaults.
 
 ## What this project is
 
-GiRustStatus: a portable Windows desktop app (Rust + egui) that tracks
+Cairnwatch: a portable Windows desktop app (Rust + egui) that tracks
 GitHub/GitLab repos the user follows, shows new releases, and gates every
 asset download behind a VirusTotal scan (hash lookup first, upload fallback
 second). No installation of downloads — the user installs manually.

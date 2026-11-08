@@ -1,13 +1,13 @@
 [lib]
-name = "giruststatus"
+name = "cairnwatch"
 path = "src/lib.rs"
 
 [[bin]]
-name = "giruststatus"
+name = "cairnwatch"
 path = "src/main.rs"
 
 [package]
-name = "giruststatus"
+name = "cairnwatch"
 version = "0.1.0"
 edition = "2021"
 description = "Portable GitHub/GitLab release tracker with a VirusTotal download gate"

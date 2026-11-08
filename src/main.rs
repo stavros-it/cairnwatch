@@ -46,10 +46,12 @@ fn main() -> eframe::Result {
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 640.0])
             .with_icon(load_icon()),
+        // Open centered on the monitor.
+        centered: true,
         ..Default::default()
     };
     eframe::run_native(
-        "GiRustStatus",
+        "Cairnwatch",
         options,
         Box::new(|cc| {
             ui::theme::apply(&cc.egui_ctx, Config::default().theme);
@@ -282,7 +284,7 @@ impl eframe::App for App {
             .exact_width(176.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new("GiRustStatus")
+                    egui::RichText::new("Cairnwatch")
                         .size(ui::theme::Tokens::BODY + 2.0)
                         .color(ui::theme::Tokens::TEXT)
                         .strong(),
@@ -372,7 +374,7 @@ impl eframe::App for App {
                     View::Logs => {
                         let export = ui::logs::show(ui, &self.log_ring);
                         if export {
-                            let path = crate::core::paths::app_dir().join("girust-log.txt");
+                            let path = crate::core::paths::app_dir().join("cairnwatch-log.txt");
                             let all: Vec<&str> = self.log_ring.iter().map(|s| s.as_str()).collect();
                             match std::fs::write(&path, all.join("\n")) {
                                 Ok(_) => self.log(format!("log exported: {}", path.display())),
@@ -408,7 +410,7 @@ impl eframe::App for App {
                         }
                         if action.export_plain {
                             let path = crate::core::paths::app_dir()
-                                .join("girust-export.json");
+                                .join("cairnwatch-export.json");
                             let bytes = crate::core::io::export(
                                 &self.state,
                                 &self.config,
@@ -424,9 +426,9 @@ impl eframe::App for App {
                         }
                         if action.import_file {
                             // Accept both export filenames (review fix).
-                            let enc = crate::core::paths::app_dir().join("girust-export.enc");
+                            let enc = crate::core::paths::app_dir().join("cairnwatch-export.enc");
                             let plain =
-                                crate::core::paths::app_dir().join("girust-export.json");
+                                crate::core::paths::app_dir().join("cairnwatch-export.json");
                             let path = if enc.exists() {
                                 enc
                             } else {
@@ -1264,7 +1266,7 @@ impl App {
                     );
                     ui.horizontal(|ui| {
                         if ui.button("Export").clicked() && !self.export_password.is_empty() {
-                            let path = crate::core::paths::app_dir().join("girust-export.enc");
+                            let path = crate::core::paths::app_dir().join("cairnwatch-export.enc");
                             let bytes = crate::core::io::export(
                                 &self.state,
                                 &self.config,

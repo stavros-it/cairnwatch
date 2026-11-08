@@ -7,12 +7,12 @@ async fn fetch_latest_release_from_github() {
         eprintln!("skipping smoke test (GIRUST_SMOKE=0)");
         return;
     }
-    // Build a plain client; giruststatus's net module needs the binary
+    // Build a plain client; cairnwatch's net module needs the binary
     // crate, so tests here exercise via the lib target below.
     let client = reqwest::Client::new();
     let resp = client
         .get("https://api.github.com/repos/serde-rs/serde/releases/latest")
-        .header("User-Agent", "GiRustStatus-smoke")
+        .header("User-Agent", "Cairnwatch-smoke")
         .send()
         .await
         .expect("network request");

@@ -1,4 +1,4 @@
-# PROJECT.md — GiRustStatus Project Context
+# PROJECT.md — Cairnwatch Project Context
 
 Written for any person or agent picking this project up cold. Keep current;
 update when decisions change.
@@ -115,7 +115,7 @@ fixes in. See `ROADMAP.md` post-1.0 backlog for deferred minors.
 ## Known limitations
 
 - Dark theme only (design system: light not recommended; user-approved).
-- Import reads a fixed file next to the exe (`girust-export.json` /
+- Import reads a fixed file next to the exe (`cairnwatch-export.json` /
   `.enc`); no native file picker (portability).
 - VT engine list absent for uploaded-by-us verdicts (analysis payloads
   carry stats only, not per-engine results).

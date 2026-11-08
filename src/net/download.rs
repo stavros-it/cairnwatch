@@ -66,7 +66,7 @@ pub async fn download_to_temp(
 
     let resp = client
         .get(url)
-        .header("User-Agent", "GiRustStatus")
+        .header("User-Agent", "Cairnwatch")
         .send()
         .await
         .map_err(|e| DlError::Network(e.to_string()))?;

@@ -91,7 +91,7 @@ pub async fn fetch_latest(
     let mut req = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "GiRustStatus");
+        .header("User-Agent", "Cairnwatch");
     if let Some(pat) = pat {
         req = req.header("Authorization", format!("Bearer {pat}"));
     }
@@ -124,7 +124,7 @@ pub async fn fetch_releases_list(
     let mut req = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "GiRustStatus");
+        .header("User-Agent", "Cairnwatch");
     if let Some(pat) = pat {
         req = req.header("Authorization", format!("Bearer {pat}"));
     }
