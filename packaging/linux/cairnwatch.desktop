@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Cairnwatch
+Comment=Release tracker with a VirusTotal download gate
+Exec=cairnwatch
+Icon=cairnwatch
+Categories=Utility;Network;
+Terminal=false

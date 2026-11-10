@@ -5,6 +5,15 @@ use std::path::PathBuf;
 
 /// The folder containing the running exe. All app data derives from here.
 pub fn app_dir() -> PathBuf {
+    // Inside an AppImage the exe sits on a read-only squashfs mount; the
+    // runtime sets $APPIMAGE to the .AppImage file, so data goes next to it.
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+    {
+        return dir;
+    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))

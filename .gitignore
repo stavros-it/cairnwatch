@@ -39,3 +39,6 @@ AGENTS.md
 PRODUCT.md
 PROJECT.md
 ROADMAP.md
+
+# Linux AppImage build output
+dist/
