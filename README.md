@@ -7,12 +7,12 @@
 **Track the releases of the GitHub and GitLab projects you follow, and scan every download on VirusTotal before it touches your disk.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows-blue)
+![Platform: Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange)
 
 </div>
 
-Cairnwatch is a small, portable Windows desktop app. Paste the URL of a
+Cairnwatch is a small, portable desktop app for Windows and Linux. Paste the URL of a
 GitHub or GitLab repo, hit **Refresh**, and see which projects have a new
 release. When you download a release asset, Cairnwatch checks it on
 VirusTotal first and only delivers it to your download folder once it has a
@@ -27,14 +27,16 @@ verdict you accept. It never installs anything. You run the files yourself.
 - **Per-repo filters**: include prereleases, tag regex, and an asset glob (for example `*-x86_64.zip`) that sorts matching assets first.
 - **Search, sort, pin and categorise** your list.
 - **Rate-limit and statistics views**, plus an in-memory log with local timestamps.
-- **Portable**: one exe. Config and data live next to it. No installer, no registry.
+- **Portable**: one exe on Windows, one AppImage on Linux. Config and data live next to it. No installer, no registry.
 - **Private**: manual refresh only, no background polling, no telemetry. The only network calls go to the GitHub, GitLab and VirusTotal APIs.
-- **Keys kept safe**: API keys live in Windows Credential Manager, never in `config.toml` or a plain export.
+- **Keys kept safe**: API keys live in Windows Credential Manager (or the Secret Service keyring on Linux), never in `config.toml` or a plain export.
 
 ## Getting started
 
-1. Download `cairnwatch.exe` from the [Releases](https://github.com/stavros-it/cairnwatch/releases) page, or [build it yourself](#build-from-source).
-2. Put it anywhere and start it. It creates `config.toml`, `repos.json`, `tmp/` and `downloads/` next to the exe.
+1. Download from the [Releases](https://github.com/stavros-it/cairnwatch/releases) page, or [build it yourself](#build-from-source):
+   - **Windows**: `cairnwatch-<version>-windows.zip`, unzip and run `cairnwatch.exe`.
+   - **Linux**: `Cairnwatch-<version>-x86_64.AppImage`, then `chmod +x` it and run it.
+2. Put it in its own folder and start it. It creates `config.toml`, `repos.json`, `tmp/` and `downloads/` next to the exe (or next to the `.AppImage` on Linux).
 3. Open **Settings** and add:
    - a **VirusTotal API key** (free at [virustotal.com](https://www.virustotal.com)). Without one, every download asks "Not scanned, proceed?" with Cancel as the default.
    - optionally a **GitHub token** to raise the limit from 60 to 5000 requests per hour, and a GitLab token.
@@ -62,6 +64,9 @@ keeps the app's original name so existing installs keep their keys). This
 is the one thing stored outside the app folder, so keys do **not** travel
 with the folder.
 
+On Linux the same entries go to the **Secret Service** keyring (GNOME
+Keyring, KWallet) over D-Bus, so a keyring daemon must be running.
+
 ## Moving to another PC
 
 1. Settings, **Export (encrypted, with keys…)**, choose a password. This writes `cairnwatch-export.enc` next to the exe.
@@ -72,21 +77,27 @@ The plain export contains no keys. Delete the `.enc` file once imported.
 
 ## Build from source
 
-You need a recent stable [Rust toolchain](https://rustup.rs) on Windows.
+You need a recent stable [Rust toolchain](https://rustup.rs).
 
 ```sh
 cargo test
-cargo build --release   # output: target/release/cairnwatch.exe
+cargo build --release   # output: target/release/cairnwatch(.exe)
 ```
 
-Built with [egui](https://github.com/emilk/egui)/eframe and rustls. Windows is the supported platform.
+Linux AppImage (x86_64; needs `build-essential pkg-config curl file libxkbcommon-dev libwayland-dev libgl1-mesa-dev`):
+
+```sh
+packaging/linux/build-appimage.sh   # output: dist/Cairnwatch-<version>-x86_64.AppImage
+```
+
+Built with [egui](https://github.com/emilk/egui)/eframe and rustls. Windows is the primary platform; Linux is supported via AppImage.
 
 ## Inspiration
 
 Cairnwatch is inspired by [Obtainium Plus](https://github.com/thejaustin/ObtainiumPlus),
 a fork of [Obtainium](https://github.com/ImranR98/Obtainium) for Android,
 which fetches app updates straight from their developers. Cairnwatch brings
-that idea to the Windows desktop and adds a VirusTotal gate in front of
+that idea to the desktop and adds a VirusTotal gate in front of
 every download. It shares no code with either project.
 
 ## License
