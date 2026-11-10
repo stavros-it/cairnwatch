@@ -765,21 +765,16 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .outer_margin(egui::Margin::symmetric(0.0, 4.0))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            // Strip and ribbon are painted after layout so
+                            // they span the full row height (rows with a
+                            // description are taller than 44px).
+                            let mut strip_rect = egui::Rect::NOTHING;
+                            let mut ribbon_rect = egui::Rect::NOTHING;
+                            let row = ui.horizontal(|ui| {
                                 // Leading strip: green when NEW.
-                                let (strip_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(3.0, 44.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(
-                                    strip_rect,
-                                    1.5,
-                                    if is_new {
-                                        ui::theme::Tokens::ACCENT
-                                    } else {
-                                        ui::theme::Tokens::BORDER
-                                    },
-                                );
+                                strip_rect = ui
+                                    .allocate_exact_size(egui::vec2(3.0, 44.0), egui::Sense::hover())
+                                    .0;
                                 ui.add_space(8.0);
                                 // Host glyph.
                                 let host_glyph = match &repo.host {
@@ -803,41 +798,72 @@ impl App {
                                         );
                                     });
                                 ui.add_space(8.0);
-                                // Name + owner (clickable → detail).
+                                // Name + owner, then description (clickable → detail).
+                                // Text column fills the space up to the
+                                // date + pills (a fixed 340px reserve left
+                                // an empty gap). The date+pills width is
+                                // measured each frame and remembered per row.
+                                let right_w_id = id.with("right_w");
+                                let right_w: f32 =
+                                    ui.data(|d| d.get_temp(right_w_id)).unwrap_or(260.0);
+                                let text_w = (ui.available_width() - right_w - 24.0).max(160.0);
                                 ui.vertical(|ui| {
-                                    // Leave room for date + pills; long names
-                                    // truncate instead of running under them.
-                                    ui.set_max_width((ui.available_width() - 340.0).max(120.0));
+                                    ui.set_width(text_w);
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    // Line 1: name (bold, 18px) + owner (16px muted),
+                                    // one row, ellipsis when too long.
                                     let name = if repo.pinned {
                                         format!("📌 {}", repo.name)
                                     } else {
                                         repo.name.clone()
                                     };
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(name)
-                                                .size(ui::theme::Tokens::BODY)
-                                                .color(ui::theme::Tokens::TEXT)
-                                                .strong(),
-                                        )
-                                        .truncate(),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(&repo.owner)
-                                            .size(ui::theme::Tokens::SMALL + 2.0)
-                                            .color(ui::theme::Tokens::MUTED),
-                                    );
+                                    let style = ui.style().clone();
+                                    let mut head = egui::text::LayoutJob::default();
+                                    egui::RichText::new(name)
+                                        .size(ui::theme::Tokens::BODY + 2.0)
+                                        .color(ui::theme::Tokens::TEXT)
+                                        .strong()
+                                        .append_to(&mut head, &style, egui::FontSelection::Default, egui::Align::Center);
+                                    egui::RichText::new(format!("   {}", repo.owner))
+                                        .size(ui::theme::Tokens::BODY)
+                                        .color(ui::theme::Tokens::MUTED)
+                                        .append_to(&mut head, &style, egui::FontSelection::Default, egui::Align::Center);
+                                    head.wrap = egui::text::TextWrapping {
+                                        max_width: text_w,
+                                        max_rows: 1,
+                                        break_anywhere: true,
+                                        overflow_character: Some('…'),
+                                    };
+                                    let head = ui.fonts(|f| f.layout_job(head));
+                                    ui.add(egui::Label::new(head).selectable(false));
+                                    // Lines 2-3: description, 16px, wraps to
+                                    // at most two rows with an ellipsis.
+                                    if let Some(desc) = repo.short_description() {
+                                        let mut job = egui::text::LayoutJob::single_section(
+                                            desc,
+                                            egui::TextFormat {
+                                                font_id: egui::FontId::proportional(ui::theme::Tokens::BODY),
+                                                color: ui::theme::Tokens::MUTED,
+                                                ..Default::default()
+                                            },
+                                        );
+                                        job.wrap = egui::text::TextWrapping {
+                                            max_width: text_w,
+                                            max_rows: 2,
+                                            break_anywhere: false,
+                                            overflow_character: Some('…'),
+                                        };
+                                        let galley = ui.fonts(|f| f.layout_job(job));
+                                        ui.add(egui::Label::new(galley).selectable(false));
+                                    }
                                 });
                                 // Tag + date.
-                                if let Some(rel) = &repo.latest {
+                                let right_resp = if let Some(rel) = &repo.latest {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        // Trailing ribbon.
-                                        let ribbon_color = ui::list::ribbon_color(repo.category.as_deref());
-                                        let (r_rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(3.0, 44.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().rect_filled(r_rect, 1.5, ribbon_color);
+                                        // Trailing ribbon (painted after layout).
+                                        ribbon_rect = ui
+                                            .allocate_exact_size(egui::vec2(3.0, 44.0), egui::Sense::hover())
+                                            .0;
                                         ui.add_space(8.0);
                                         ui::widgets::status_pill(ui, &repo.status);
                                         ui::widgets::version_pill(ui, &rel.tag, is_new);
@@ -861,28 +887,42 @@ impl App {
                                             egui::RichText::new(
                                                 rel.published_at.get(..10).unwrap_or(&rel.published_at),
                                             )
-                                                .size(ui::theme::Tokens::DATA)
+                                                .size(ui::theme::Tokens::BODY)
                                                 .color(ui::theme::Tokens::MUTED),
                                         );
-                                    });
+                                    })
                                 } else {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         // Category ribbon too (was only drawn
                                         // for repos with a release).
-                                        let (r_rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(3.0, 44.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().rect_filled(
-                                            r_rect,
-                                            1.5,
-                                            ui::list::ribbon_color(repo.category.as_deref()),
-                                        );
+                                        ribbon_rect = ui
+                                            .allocate_exact_size(egui::vec2(3.0, 44.0), egui::Sense::hover())
+                                            .0;
                                         ui.add_space(8.0);
                                         ui::widgets::status_pill(ui, &repo.status);
-                                    });
+                                    })
+                                };
+                                let w = right_resp.response.rect.width();
+                                if (w - right_w).abs() > 0.5 {
+                                    ui.data_mut(|d| d.insert_temp(right_w_id, w));
+                                    ui.ctx().request_repaint();
                                 }
                             });
+                            let row_y = row.response.rect.y_range();
+                            ui.painter().rect_filled(
+                                egui::Rect::from_x_y_ranges(strip_rect.x_range(), row_y),
+                                1.5,
+                                if is_new {
+                                    ui::theme::Tokens::ACCENT
+                                } else {
+                                    ui::theme::Tokens::BORDER
+                                },
+                            );
+                            ui.painter().rect_filled(
+                                egui::Rect::from_x_y_ranges(ribbon_rect.x_range(), row_y),
+                                1.5,
+                                ui::list::ribbon_color(repo.category.as_deref()),
+                            );
                             // Row click target (whole row → detail).
                             let row_response =
                                 ui.allocate_rect(ui.min_rect(), egui::Sense::click());

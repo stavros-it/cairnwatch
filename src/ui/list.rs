@@ -127,6 +127,7 @@ mod tests {
             owner: owner.into(),
             name: name.into(),
             category: None,
+            description: None,
             pinned,
             filters: ReleaseFilters::default(),
             gl_project_id: None,

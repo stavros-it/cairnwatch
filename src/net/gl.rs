@@ -83,13 +83,14 @@ fn api_base(host: &str) -> String {
     }
 }
 
-/// Resolve `owner/name` (full group path) → numeric project id.
-pub async fn resolve_project_id(
+/// Resolve `owner/name` (full group path) → numeric project id and short
+/// description (`""` when the project has none).
+pub async fn resolve_project(
     client: &reqwest::Client,
     host: &str,
     owner_slash_name: &str,
     pat: Option<&str>,
-) -> Result<u64, GlError> {
+) -> Result<(u64, String), GlError> {
     let encoded = urlencoding_simple(owner_slash_name);
     let url = format!("{}/projects/{}", api_base(host), encoded);
     let mut req = client.get(&url).header("User-Agent", "Cairnwatch");
@@ -109,12 +110,14 @@ pub async fn resolve_project_id(
     #[derive(Deserialize)]
     struct Proj {
         id: u64,
+        #[serde(default)]
+        description: Option<String>,
     }
     let p: Proj = resp
         .json()
         .await
         .map_err(|e| GlError::Parse(e.to_string()))?;
-    Ok(p.id)
+    Ok((p.id, p.description.unwrap_or_default()))
 }
 
 /// Percent-encode a project path (`grp/sub/proj` → `grp%2Fsub%2Fproj`).

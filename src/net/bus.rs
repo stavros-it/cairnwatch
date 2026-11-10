@@ -328,14 +328,26 @@ async fn refresh_one(
                     Err(e) => return fetch_error_status(&r, e),
                 }
             }
+            // Description: fetched once (one extra call), retried on the
+            // next refresh if it fails. Never fails the refresh itself.
+            if r.description.is_none() {
+                if let Ok(d) = gh::fetch_description(client, &r.owner, &r.name, pat).await {
+                    r.description = Some(d);
+                }
+            }
         }
         RepoHost::GitLab { host } => {
             let pat = config.gitlab_pat.as_deref();
-            // Resolve project id if not cached.
-            if r.gl_project_id.is_none() {
-                match gl::resolve_project_id(client, host, &format!("{}/{}", r.owner, r.name), pat).await {
-                    Ok(id) => r.gl_project_id = Some(id),
-                    Err(e) => return gl_error_status(&r, e),
+            // Resolve project id (and description) if not cached. The
+            // project lookup is fatal only when the id is still unknown.
+            if r.gl_project_id.is_none() || r.description.is_none() {
+                match gl::resolve_project(client, host, &format!("{}/{}", r.owner, r.name), pat).await {
+                    Ok((id, desc)) => {
+                        r.gl_project_id = Some(id);
+                        r.description = Some(desc);
+                    }
+                    Err(e) if r.gl_project_id.is_none() => return gl_error_status(&r, e),
+                    Err(_) => {}
                 }
             }
             let id = r.gl_project_id.unwrap();
@@ -456,6 +468,7 @@ pub fn spawn(
                             owner,
                             name,
                             category: None,
+                            description: None,
                             pinned: false,
                             filters: Default::default(),
                             gl_project_id: None,

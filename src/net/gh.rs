@@ -112,6 +112,43 @@ pub async fn fetch_latest(
     Ok(gh.to_model())
 }
 
+/// Fetch the repo's short description (`GET /repos/{owner}/{name}`).
+/// `Ok(String::new())` when the repo has none.
+pub async fn fetch_description(
+    client: &reqwest::Client,
+    owner: &str,
+    name: &str,
+    pat: Option<&str>,
+) -> Result<String, FetchError> {
+    let url = format!("{GH_API}/repos/{owner}/{name}");
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "Cairnwatch");
+    if let Some(pat) = pat {
+        req = req.header("Authorization", format!("Bearer {pat}"));
+    }
+    let resp = req.send().await.inspect(|r| crate::net::ratelimits::observe(r.headers())).map_err(|e| FetchError::Network(e.to_string()))?;
+    match resp.status() {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::NOT_FOUND => return Err(FetchError::NotFound),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+            return Err(FetchError::Auth)
+        }
+        reqwest::StatusCode::TOO_MANY_REQUESTS => return Err(FetchError::RateLimited),
+        s => return Err(FetchError::Network(format!("github status {s}"))),
+    }
+    #[derive(Deserialize)]
+    struct GhRepo {
+        description: Option<String>,
+    }
+    let r: GhRepo = resp
+        .json()
+        .await
+        .map_err(|e| FetchError::Parse(e.to_string()))?;
+    Ok(r.description.unwrap_or_default())
+}
+
 /// Fetch the releases list and apply filters (prerelease include, tag regex).
 pub async fn fetch_releases_list(
     client: &reqwest::Client,

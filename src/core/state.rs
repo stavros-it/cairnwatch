@@ -75,6 +75,7 @@ mod tests {
                 category: None,
                 pinned: false,
                 filters: Default::default(),
+                description: None,
                 gl_project_id: None,
                 last_seen_tag: Some("1.81.0".into()),
                 installed_tag: None,

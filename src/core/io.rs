@@ -171,6 +171,7 @@ mod tests {
             owner: "o".into(),
             name: "r".into(),
             category: Some("tools".into()),
+            description: None,
             pinned: true,
             filters: Default::default(),
             gl_project_id: None,

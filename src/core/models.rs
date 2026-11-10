@@ -101,6 +101,10 @@ pub struct Repo {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// Short repo description from GitHub/GitLab, fetched once.
+    /// `None` = not fetched yet; `Some("")` = fetched, repo has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default)]
     pub pinned: bool,
     #[serde(default)]
@@ -133,6 +137,15 @@ impl Repo {
     #[allow(dead_code)] // used by Task 6 UI
     pub fn display_name(&self) -> String {
         format!("{}/{}", self.owner, self.name)
+    }
+
+    /// Description for the list row: whitespace collapsed to single
+    /// spaces (newlines in repo descriptions break the row layout).
+    /// `None` when unfetched or empty.
+    pub fn short_description(&self) -> Option<String> {
+        let d = self.description.as_deref()?;
+        let s = d.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!s.is_empty()).then_some(s)
     }
 
     /// True when the user marked an installed version and the latest
@@ -216,6 +229,7 @@ mod tests {
             owner: "grp/sub".into(),
             name: "proj".into(),
             category: Some("tools".into()),
+            description: Some("A project".into()),
             pinned: true,
             filters: ReleaseFilters {
                 include_prereleases: true,
@@ -244,6 +258,20 @@ mod tests {
         let json = serde_json::to_string(&repo).unwrap();
         let back: Repo = serde_json::from_str(&json).unwrap();
         assert_eq!(back, repo);
+    }
+
+    #[test]
+    fn short_description_collapses_whitespace_and_hides_empty() {
+        let mut repo: Repo = serde_json::from_str(
+            r#"{"id":"github.com/o/n","host":"GitHub","owner":"o","name":"n"}"#,
+        )
+        .unwrap();
+        // Old repos.json without description loads fine.
+        assert_eq!(repo.short_description(), None);
+        repo.description = Some("   ".into());
+        assert_eq!(repo.short_description(), None);
+        repo.description = Some("  Fast\n\tJSON  parser ".into());
+        assert_eq!(repo.short_description().as_deref(), Some("Fast JSON parser"));
     }
 
     #[test]
