@@ -8,6 +8,8 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platform: Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
+[![Release](https://img.shields.io/github/v/release/stavros-it/cairnwatch)](https://github.com/stavros-it/cairnwatch/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/stavros-it/cairnwatch/total)](https://github.com/stavros-it/cairnwatch/releases)
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange)
 
 </div>
